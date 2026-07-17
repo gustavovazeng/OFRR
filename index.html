@@ -220,6 +220,7 @@ const S = {
   updated:null,
   loading:true,
   error:null,
+  manualSpendHoje:null, // override manual do investimento de "hoje" (Resumo diário)
   // cross-filtering (aba Campanhas/Anúncios)
   selectedCamps:new Set(),
   selectedAds:new Set(),
@@ -996,11 +997,24 @@ function renderAnuncios(){
 // ── Render: Resumo diário ──────────────────────────────────────────────────
 function renderResumo(){
   const el=document.getElementById("page-resumo");if(!el)return;
+  const _fid=document.activeElement?.id; // capturar antes do innerHTML destruir o foco
   const today=todayISO(), yest=yesterdayISO();
 
-  const tot  =periodTotals(null,null); // Total - Consolidado (todo o período)
   const ontem=periodTotals(yest,yest);
-  const hoje =periodTotals(today,today);
+  const hojeRaw=periodTotals(today,today); // valor "cru" vindo da Base Meta, antes de qualquer override manual
+  const isManual=S.manualSpendHoje!==null;
+
+  // "Hoje": se houver override manual, usa o valor digitado no lugar do investimento da Base Meta
+  const hoje=isManual
+    ? {...hojeRaw, spend:S.manualSpendHoje, cpl:hojeRaw.traf>0?S.manualSpendHoje/hojeRaw.traf:0}
+    : hojeRaw;
+
+  // "Total - Consolidado": soma tudo, mas troca a fatia de "hoje" pelo valor manual quando houver override
+  let tot=periodTotals(null,null);
+  if(isManual){
+    const adjSpend=tot.spend-hojeRaw.spend+S.manualSpendHoje;
+    tot={...tot, spend:adjSpend, cpl:tot.traf>0?adjSpend/tot.traf:0};
+  }
 
   function cplInfo(m,isHoje){
     if(!m.traf) return {txt:isHoje?"--!":"--", emoji:"🔴"};
@@ -1017,6 +1031,21 @@ function renderResumo(){
       <span style="font-size:14px;min-width:90px;text-align:right">${emoji||""}<span style="font-size:10px;color:var(--hint);margin-left:4px">${metaStr||""}</span></span>
     </div>`;
   }
+  function investRowHoje(){
+    return `<div style="display:grid;grid-template-columns:180px 1fr auto;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:center">
+      <span style="color:var(--muted);font-size:12px">Investimento</span>
+      <input id="manual-spend-input"
+        value="${isManual?(hoje.spend||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):''}"
+        placeholder="${fBRL(hojeRaw.spend)}"
+        inputmode="decimal"
+        oninput="setManualSpendHoje(this.value)"
+        onkeydown="if(event.key==='Enter')this.blur()"
+        style="font-family:'JetBrains Mono',monospace;font-size:13px;color:${isManual?'#fbbf24':'var(--text-strong)'};background:transparent;border:none;border-bottom:1px solid ${isManual?'rgba(251,191,36,.4)':'rgba(255,255,255,.15)'};outline:none;padding:2px 0;width:100%"/>
+      <span style="font-size:11px;min-width:90px;text-align:right">
+        ${isManual?`<button onclick="clearManualSpendHoje()" style="font-size:10px;padding:3px 9px;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);color:#fbbf24;border-radius:5px;cursor:pointer;font-family:'DM Sans',sans-serif">↩ Restaurar</button>`:""}
+      </span>
+    </div>`;
+  }
   function block(title,m,isHoje,dateLbl){
     const c=cplInfo(m,isHoje);
     return `
@@ -1027,7 +1056,7 @@ function renderResumo(){
       </div>
       ${row("Fichas (tráfego)",m.traf,"","")}
       <div style="height:6px"></div>
-      ${row("Investimento",fBRL(m.spend),"","")}
+      ${isHoje?investRowHoje():row("Investimento",fBRL(m.spend),"","")}
       ${row("Custo/ficha",c.txt,`meta ${fBRL(META_CPL)}`,c.emoji)}
     </div>`;
   }
@@ -1080,7 +1109,19 @@ Custo/ ficha:\t${ch_.txt}\t${ch_.emoji} (meta: ${fBRL(META_CPL)})`;
     </div>
     <div class="foot">OFRR · Carrinho · conectado ao Google Sheets</div>`;
   el._resumoText=resumoText;
+  if(_fid==="manual-spend-input"){
+    requestAnimationFrame(()=>{
+      const _s=document.getElementById("manual-spend-input");
+      if(_s){_s.focus();const _l=_s.value.length;_s.setSelectionRange(_l,_l);}
+    });
+  }
 }
+function setManualSpendHoje(v){
+  const n=parseFloat(String(v).replace(/[R$\s.]/g,"").replace(",","."));
+  S.manualSpendHoje=(isNaN(n)||n<=0)?null:n;
+  renderResumo();
+}
+function clearManualSpendHoje(){S.manualSpendHoje=null;renderResumo();}
 function copyResumo(){
   const el=document.getElementById("page-resumo");
   const text=el?._resumoText||"";if(!text)return;
