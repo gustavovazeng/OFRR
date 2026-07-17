@@ -394,16 +394,17 @@ async function loadData(){
       const im=parseInt(r["Impressions"]||0)||0;
       const vv=parseInt(r["Action Video View"]||0)||0;
       const v75=parseInt(r["Video 75 Percent Watched Actions"]||0)||0;
+      const lv=parseInt(r["Action Landing Page View"]||0)||0;
       const adId=(r["Ad ID"]||"").trim();
       const adName=(r["Ad Name"]||"").trim();
       const campId=(r["Campaign ID"]||"").trim();
       const campName=(r["Campaign Name"]||"").trim();
       const igUrl=(r["Instagram Permalink URL"]||"").trim();
 
-      if(!mD[d])mD[d]={spend:0,clicks:0,impressions:0,videoViews:0,video75:0};
-      mD[d].spend+=sp;mD[d].clicks+=cl;mD[d].impressions+=im;mD[d].videoViews+=vv;mD[d].video75+=v75;
+      if(!mD[d])mD[d]={spend:0,clicks:0,impressions:0,videoViews:0,video75:0,landingViews:0};
+      mD[d].spend+=sp;mD[d].clicks+=cl;mD[d].impressions+=im;mD[d].videoViews+=vv;mD[d].video75+=v75;mD[d].landingViews+=lv;
 
-      metaRows.push({date:d,adId,adName,campId,campName,spend:sp,clicks:cl,impressions:im,videoViews:vv,video75:v75,igUrl});
+      metaRows.push({date:d,adId,adName,campId,campName,spend:sp,clicks:cl,impressions:im,videoViews:vv,video75:v75,landingViews:lv,igUrl});
 
       if(adId&&!adIdMap[adId])adIdMap[adId]={adName,campName,campId,igUrl};
       if(adId&&igUrl&&!adIdMap[adId].igUrl)adIdMap[adId].igUrl=igUrl;
@@ -472,15 +473,22 @@ function getTotals(daily){
 // s,e = null → todo o período (all-time)
 function periodTotals(s,e){
   const dates=new Set([...Object.keys(S.trafego),...Object.keys(S.organico),...Object.keys(S.meta)]);
-  let traf=0,org=0,spend=0;
+  let traf=0,org=0,spend=0,clicks=0,impressions=0,landingViews=0;
   for(const d of dates){
     if(s!==null&&d<s)continue;
     if(e!==null&&d>e)continue;
     traf+=S.trafego[d]||0;
     org+=S.organico[d]||0;
-    spend+=(S.meta[d]?.spend)||0;
+    const m=S.meta[d];
+    if(m){ spend+=m.spend||0; clicks+=m.clicks||0; impressions+=m.impressions||0; landingViews+=m.landingViews||0; }
   }
-  return{traf,org,spend,cpl:traf>0?spend/traf:0};
+  return{traf,org,spend,clicks,impressions,landingViews,
+    cpl:traf>0?spend/traf:0,
+    cpc:clicks>0?spend/clicks:0,
+    ctr:impressions>0?(clicks/impressions)*100:0,
+    cpm:impressions>0?(spend/impressions)*1000:0,
+    // Tx conversão formulário = fichas reais de tráfego / page views da landing
+    txForm:landingViews>0?(traf/landingViews)*100:0};
 }
 // ── Campanhas / Anúncios: agregação com cross-filtering ───────────────────
 function getMetaRowsInRange(start,end){
@@ -1005,15 +1013,19 @@ function renderResumo(){
   const isManual=S.manualSpendHoje!==null;
 
   // "Hoje": se houver override manual, usa o valor digitado no lugar do investimento da Base Meta
+  // (CPC/CPM ficam estáticos, com base no investimento bruto da Base Meta — só Custo/ficha recalcula)
   const hoje=isManual
-    ? {...hojeRaw, spend:S.manualSpendHoje, cpl:hojeRaw.traf>0?S.manualSpendHoje/hojeRaw.traf:0}
+    ? {...hojeRaw, spend:S.manualSpendHoje,
+        cpl:hojeRaw.traf>0?S.manualSpendHoje/hojeRaw.traf:0}
     : hojeRaw;
 
   // "Total - Consolidado": soma tudo, mas troca a fatia de "hoje" pelo valor manual quando houver override
+  // (CPC/CPM do consolidado também ficam estáticos, com base no investimento bruto)
   let tot=periodTotals(null,null);
   if(isManual){
     const adjSpend=tot.spend-hojeRaw.spend+S.manualSpendHoje;
-    tot={...tot, spend:adjSpend, cpl:tot.traf>0?adjSpend/tot.traf:0};
+    tot={...tot, spend:adjSpend,
+      cpl:tot.traf>0?adjSpend/tot.traf:0};
   }
 
   function cplInfo(m,isHoje){
@@ -1058,33 +1070,36 @@ function renderResumo(){
       <div style="height:6px"></div>
       ${isHoje?investRowHoje():row("Investimento",fBRL(m.spend),"","")}
       ${row("Custo/ficha",c.txt,`meta ${fBRL(META_CPL)}`,c.emoji)}
+      <div style="height:10px"></div>
+      ${row("CPC",fBRL(m.cpc),"","")}
+      ${row("CTR",fPct(m.ctr),"","")}
+      ${row("CPM",fBRL(m.cpm),"","")}
+      ${row("Tx conversão formulário",fPct(m.txForm),"","")}
     </div>`;
   }
 
   const ct=cplInfo(tot), co=cplInfo(ontem), ch_=cplInfo(hoje,true);
+  function textBlock(label,m,dateLbl,c){
+    return `${label}${dateLbl?`\t${dateLbl}`:""}
+
+Fichas:\t${m.traf}
+
+Investimento:\t${fBRL(m.spend)}
+Custo/ ficha:\t${c.txt}\t${c.emoji} (meta: ${fBRL(META_CPL)})
+
+CPC:\t${fBRL(m.cpc)}
+CTR:\t${fPct(m.ctr)}
+CPM:\t${fBRL(m.cpm)}
+Tx conversão formulário:\t${fPct(m.txForm)}`;
+  }
   const resumoText=
 `ofrr_fev26 | Carrinho
 
-Total - Consolidado
-
-Fichas:\t${tot.traf}
-
-Investimento:\t${fBRL(tot.spend)}
-Custo/ ficha:\t${ct.txt}\t${ct.emoji} (meta: ${fBRL(META_CPL)})
+${textBlock("Total - Consolidado",tot,"",ct)}
 ---------------------
-Ontem\t${fDateBR(yest)}
-
-Fichas:\t${ontem.traf}
-
-Investimento:\t${fBRL(ontem.spend)}
-Custo/ ficha:\t${co.txt}\t${co.emoji} (meta: ${fBRL(META_CPL)})
+${textBlock("Ontem",ontem,fDateBR(yest),co)}
 ---------------------
-Hoje\t${fDateBR(today)}
-
-Fichas:\t${hoje.traf}
-
-Investimento:\t${fBRL(hoje.spend)}
-Custo/ ficha:\t${ch_.txt}\t${ch_.emoji} (meta: ${fBRL(META_CPL)})`;
+${textBlock("Hoje",hoje,fDateBR(today),ch_)}`;
 
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:16px">
