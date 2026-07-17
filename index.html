@@ -201,6 +201,14 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
 // ── Meta de custo por ficha ────────────────────────────────────────────────
 const META_CPL = 40; // R$ 40 por ficha (tráfego)
 
+// Metas de mídia usadas no farol do Resumo diário (🟢 dentro / 🟡 até 10% fora / 🔴 mais de 10% fora)
+const METAS_RESUMO = {
+  cpc:    {val:2.55,  higher:false}, // quanto menor, melhor
+  ctr:    {val:2.20,  higher:true},  // quanto maior, melhor
+  cpm:    {val:56.03, higher:false}, // quanto menor, melhor
+  txForm: {val:9.67,  higher:true},  // quanto maior, melhor
+};
+
 // Chart colors
 const CHART_INV  = "#3b82f6";
 const CHART_CPL  = "#fbbf24";
@@ -1035,6 +1043,14 @@ function renderResumo(){
     if(ratio>=1)emoji="🟢";else if(ratio>=0.85)emoji="🟡";
     return {txt:fBRL(m.cpl),emoji};
   }
+  // Farol das metas de mídia: 🟢 dentro da meta / 🟡 até 10% fora / 🔴 mais de 10% fora
+  function metaEmoji(val,meta,higherIsBetter){
+    if(!val) return "🔴";
+    const c=statusColor(val,meta,higherIsBetter);
+    if(c==="#34d399")return "🟢";
+    if(c==="#fbbf24")return "🟡";
+    return "🔴";
+  }
 
   function row(lbl,val,metaStr,emoji){
     return `<div style="display:grid;grid-template-columns:180px 1fr auto;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:center">
@@ -1071,10 +1087,10 @@ function renderResumo(){
       ${isHoje?investRowHoje():row("Investimento",fBRL(m.spend),"","")}
       ${row("Custo/ficha",c.txt,`meta ${fBRL(META_CPL)}`,c.emoji)}
       <div style="height:10px"></div>
-      ${row("CPC",fBRL(m.cpc),"","")}
-      ${row("CTR",fPct(m.ctr),"","")}
-      ${row("CPM",fBRL(m.cpm),"","")}
-      ${row("Tx conversão formulário",fPct(m.txForm),"","")}
+      ${row("CPC",fBRL(m.cpc),`meta ${fBRL(METAS_RESUMO.cpc.val)}`,metaEmoji(m.cpc,METAS_RESUMO.cpc.val,METAS_RESUMO.cpc.higher))}
+      ${row("CTR",fPct(m.ctr),`meta ${METAS_RESUMO.ctr.val}%`,metaEmoji(m.ctr,METAS_RESUMO.ctr.val,METAS_RESUMO.ctr.higher))}
+      ${row("CPM",fBRL(m.cpm),`meta ${fBRL(METAS_RESUMO.cpm.val)}`,metaEmoji(m.cpm,METAS_RESUMO.cpm.val,METAS_RESUMO.cpm.higher))}
+      ${row("Tx conversão formulário",fPct(m.txForm),`meta ${METAS_RESUMO.txForm.val}%`,metaEmoji(m.txForm,METAS_RESUMO.txForm.val,METAS_RESUMO.txForm.higher))}
     </div>`;
   }
 
@@ -1087,10 +1103,10 @@ Fichas:\t${m.traf}
 Investimento:\t${fBRL(m.spend)}
 Custo/ ficha:\t${c.txt}\t${c.emoji} (meta: ${fBRL(META_CPL)})
 
-CPC:\t${fBRL(m.cpc)}
-CTR:\t${fPct(m.ctr)}
-CPM:\t${fBRL(m.cpm)}
-Tx conversão formulário:\t${fPct(m.txForm)}`;
+CPC:\t${fBRL(m.cpc)}\t${metaEmoji(m.cpc,METAS_RESUMO.cpc.val,METAS_RESUMO.cpc.higher)} (meta: ${fBRL(METAS_RESUMO.cpc.val)})
+CTR:\t${fPct(m.ctr)}\t${metaEmoji(m.ctr,METAS_RESUMO.ctr.val,METAS_RESUMO.ctr.higher)} (meta: ${METAS_RESUMO.ctr.val}%)
+CPM:\t${fBRL(m.cpm)}\t${metaEmoji(m.cpm,METAS_RESUMO.cpm.val,METAS_RESUMO.cpm.higher)} (meta: ${fBRL(METAS_RESUMO.cpm.val)})
+Tx conversão formulário:\t${fPct(m.txForm)}\t${metaEmoji(m.txForm,METAS_RESUMO.txForm.val,METAS_RESUMO.txForm.higher)} (meta: ${METAS_RESUMO.txForm.val}%)`;
   }
   const resumoText=
 `ofrr_fev26 | Carrinho
