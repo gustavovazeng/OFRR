@@ -157,6 +157,7 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
   <nav class="hdr-tabs" id="hdr-tabs">
     <button class="htab htab-active" onclick="navTo('principal')">⊞ Principal</button>
     <button class="htab" onclick="navTo('anuncios')">◈ Campanhas / Anúncios</button>
+    <button class="htab" onclick="navTo('vendas')">💰 Vendas</button>
     <button class="htab" onclick="navTo('resumo')">📋 Resumo diário</button>
   </nav>
   <div class="hdr-right">
@@ -181,6 +182,7 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
   <div class="sw" id="loading"><div class="sp"></div><p class="st">Carregando dados...</p></div>
   <div id="page-principal" class="page active"></div>
   <div id="page-anuncios"  class="page"></div>
+  <div id="page-vendas"    class="page"></div>
   <div id="page-resumo"    class="page"></div>
 </div>
 
@@ -223,6 +225,9 @@ const S = {
   fichaAttrib:[],        // fichas de tráfego casadas com anúncio/campanha: {date,adName,campName}
   trafego:{},            // date → count (fichas tráfego)
   organico:{},           // date → count (fichas orgânico)
+  vendasTraf:{},         // date → count (vendas casadas com fichas de tráfego)
+  vendasOrg:{},          // date → count (vendas casadas com fichas de orgânico)
+  vendasTotal:0, vendasUnmatched:0,
   startDate:"", endDate:"", activeQuick:"30d",
   currentPage:"principal",
   updated:null,
@@ -257,6 +262,9 @@ function parseBRL(s){
 function fBRL(n){ return "R$ "+(n||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fBRLShort(n){ const a=Math.abs(n||0),sg=n<0?"-":"";if(a>=1000)return sg+"R$ "+(a/1000).toFixed(1).replace(".",",")+"k";return sg+"R$ "+Math.round(a); }
 function fPct(n){ return (n||0).toFixed(2).replace(".",",")+"%"; }
+// Normalização p/ casar venda ↔ ficha por e-mail ou telefone (ignora formatação/país/pontuação)
+function normalizePhone(s){ return String(s||"").replace(/\D/g,""); }
+function normalizeEmail(s){ return String(s||"").trim().toLowerCase(); }
 function fDate(iso){ if(!iso)return"";const[,m,d]=iso.split("-");return `${d}/${m}`; }
 function fDateBR(iso){ if(!iso)return"—";const[y,m,d]=iso.split("-");return `${d}/${m}/${y}`; }
 function toISO(s){
@@ -272,10 +280,10 @@ function toISO(s){
   }
   return null;
 }
-// "Submitted At" das fichas vem com 3h a mais do horário real (ex: 18h na
-// planilha = 15h de verdade). Esta função já desconta as 3h antes de definir
-// o dia — por isso um registro "17/07 02:00" cai no dia 16/07 (23:00).
-function toISOFicha(s){
+// Parser genérico de "DD/MM/YYYY HH:MM:SS" (ou "YYYY-MM-DD ...") → epoch ms (sem fuso).
+// Usado tanto pra "Submitted At" das fichas (que precisa do ajuste -3h) quanto pra
+// "Data Correta" das vendas (que já vem certa, sem ajuste).
+function parseDateTimeMs(s){
   if(!s)return null;
   const [datePart,timePart]=String(s).trim().split(" ");
   if(!datePart)return null;
@@ -295,9 +303,23 @@ function toISOFicha(s){
     const t=timePart.split(":").map(n=>parseInt(n)||0);
     hh=t[0]||0;mi=t[1]||0;ss=t[2]||0;
   }
-  const ms=Date.UTC(y,mo-1,da,hh,mi,ss)-3*60*60*1000;
+  return Date.UTC(y,mo-1,da,hh,mi,ss);
+}
+function msToISO(ms){
   const d=new Date(ms);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
+}
+// "Submitted At" das fichas vem com 3h a mais do horário real (ex: 18h na
+// planilha = 15h de verdade). Esta função já desconta as 3h antes de definir
+// o dia — por isso um registro "17/07 02:00" cai no dia 16/07 (23:00).
+function toISOFicha(s){
+  const ms=parseDateTimeMs(s);if(ms==null)return null;
+  return msToISO(ms-3*60*60*1000);
+}
+// "Data Correta" das vendas já vem no horário certo — sem ajuste de fuso.
+function toISOVenda(s){
+  const ms=parseDateTimeMs(s);if(ms==null)return null;
+  return msToISO(ms);
 }
 
 // ── Status helpers ────────────────────────────────────────────────────────
@@ -346,6 +368,7 @@ const SHEET_ID       = "1QgCFYs6VaR7iUbGjwhPNWDN3EXeQDBKl0AdKbBPZiwg";
 const SHEET_META     = "Base Meta";
 const SHEET_TRAFEGO  = "Tráfego - Ficha de Interesse - OFRR - PPuMBINi";
 const SHEET_ORGANICO = "Disparos - Ficha de Interesse - OFRR - lebhQbV7";
+const SHEET_VENDAS   = "Vendas";
 
 async function fetchSheet(name){
   const url=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}`;
@@ -371,14 +394,16 @@ async function fetchSheet(name){
 async function loadData(){
   S.loading=true; S.error=null; render();
   try{
-    const [metaJ, trafJ, orgJ] = await Promise.all([
+    const [metaJ, trafJ, orgJ, vendasJ] = await Promise.all([
       fetchSheet(SHEET_META),
       fetchSheet(SHEET_TRAFEGO),
       fetchSheet(SHEET_ORGANICO),
+      fetchSheet(SHEET_VENDAS),
     ]);
     const metaRowsRaw = parseSheet(metaJ);
     const trafRows    = parseSheet(trafJ);
     const orgRows     = parseSheet(orgJ);
+    const vendasRows  = parseSheet(vendasJ);
 
     // ── Fichas: Tráfego (data já ajustada -3h) ──
     const trafD={};
@@ -445,8 +470,47 @@ async function loadData(){
       fichaAttrib.push({date:d,adName:adName||"(sem anúncio)",campName:campName||"(sem campanha)"});
     }
 
+    // ── Vendas → casar com tráfego ou orgânico via e-mail/telefone ──
+    // Uma venda é atribuída à ficha (tráfego ou orgânico) que a pessoa preencheu
+    // PRIMEIRO — ou seja, entre todas as fichas que batem com o e-mail/telefone da
+    // venda (em qualquer uma das duas abas), pega a de "Submitted At" mais antigo e
+    // usa a origem dela. Isso cobre o caso de alguém preencher no orgânico e depois
+    // preencher de novo vindo do tráfego: a venda continua sendo do orgânico.
+    const earliestByPhone={}, earliestByEmail={};
+    function noteFicha(type,phone,email,ms){
+      if(ms==null)return;
+      if(phone&&(!earliestByPhone[phone]||ms<earliestByPhone[phone].ms))earliestByPhone[phone]={type,ms};
+      if(email&&(!earliestByEmail[email]||ms<earliestByEmail[email].ms))earliestByEmail[email]={type,ms};
+    }
+    for(const r of trafRows){
+      noteFicha("traf",normalizePhone(r["Qual seu WhatsApp?"]),normalizeEmail(r["Qual seu E-mail?"]),parseDateTimeMs(r["Submitted At"]));
+    }
+    for(const r of orgRows){
+      noteFicha("org",normalizePhone(r["Qual seu WhatsApp?"]),normalizeEmail(r["Qual seu E-mail?"]),parseDateTimeMs(r["Submitted At"]));
+    }
+    const vTrafD={}, vOrgD={};
+    let vTotal=0, vUnmatched=0;
+    for(const r of vendasRows){
+      const d=toISOVenda(r["Data Correta"]);if(!d)continue;
+      const ph=normalizePhone(r["Whatsapp1"]);
+      const em=normalizeEmail(r["Email"]);
+      vTotal++;
+      const candidates=[];
+      if(ph&&earliestByPhone[ph])candidates.push(earliestByPhone[ph]);
+      if(em&&earliestByEmail[em])candidates.push(earliestByEmail[em]);
+      if(candidates.length){
+        candidates.sort((a,b)=>a.ms-b.ms);
+        const bucket=candidates[0].type;
+        if(bucket==="traf")vTrafD[d]=(vTrafD[d]||0)+1;
+        else vOrgD[d]=(vOrgD[d]||0)+1;
+      }else{
+        vUnmatched++;
+      }
+    }
+
     S.trafego=trafD; S.organico=orgD;
     S.meta=mD; S.metaRows=metaRows; S.adIdMap=adIdMap; S.fichaAttrib=fichaAttrib;
+    S.vendasTraf=vTrafD; S.vendasOrg=vOrgD; S.vendasTotal=vTotal; S.vendasUnmatched=vUnmatched;
 
     const allDates=[...new Set([...Object.keys(mD),...Object.keys(trafD),...Object.keys(orgD)])].sort();
     S.updated=allDates.length?fDateBR(allDates[allDates.length-1]):"—";
@@ -613,7 +677,7 @@ function copyAdResumo(){
 function renderHeader(){
   const p=S.currentPage;
   document.querySelectorAll("#hdr-tabs .htab").forEach((btn,i)=>{
-    const ids=["principal","anuncios","resumo"];
+    const ids=["principal","anuncios","vendas","resumo"];
     btn.classList.toggle("htab-active",ids[i]===p);
   });
   const per=getCurrentPeriod();
@@ -1010,6 +1074,60 @@ function renderAnuncios(){
     <div class="foot">OFRR · Carrinho · conectado ao Google Sheets</div>`;
 }
 
+// ── Render: Vendas ─────────────────────────────────────────────────────────
+function getDailyVendas(start,end){
+  const allDates=new Set([...Object.keys(S.vendasTraf),...Object.keys(S.vendasOrg)]);
+  return Array.from(allDates).sort().filter(d=>d>=start&&d<=end).map(date=>({
+    date,label:fDate(date),
+    vendasTraf:S.vendasTraf[date]||0,
+    vendasOrg:S.vendasOrg[date]||0,
+  }));
+}
+function renderVendas(){
+  const el=document.getElementById("page-vendas");if(!el)return;
+  const daily=getDailyVendas(S.startDate,S.endDate);
+  const totTraf=daily.reduce((a,d)=>a+d.vendasTraf,0);
+  const totOrg=daily.reduce((a,d)=>a+d.vendasOrg,0);
+  el.innerHTML=`
+    <div class="hdr" style="margin-bottom:6px">
+      <div>
+        <div class="hdr-title">Vendas</div>
+        <div class="hdr-sub">atualizado em: ${S.updated||"—"}${daily.length>0?` · ${daily.length} dias no período`:""} · atribuição por e-mail/telefone da ficha</div>
+      </div>
+    </div>
+    ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
+    <div class="g4" style="margin-bottom:16px">
+      ${kpiCard("Vendas (total)",S.vendasTotal.toLocaleString("pt-BR"),"todo o período","var(--text-strong)")}
+      ${kpiCard("Vendas tráfego",totTraf.toLocaleString("pt-BR"),"no período selecionado","var(--text-strong)")}
+      ${kpiCard("Vendas orgânico",totOrg.toLocaleString("pt-BR"),"no período selecionado","var(--text-strong)")}
+      ${kpiCard("Não identificadas",S.vendasUnmatched.toLocaleString("pt-BR"),"sem ficha correspondente","var(--muted)")}
+    </div>
+    <div class="cc" style="position:relative;margin-bottom:12px">
+      <div class="ch">
+        <span class="ct">Vendas por dia — Tráfego</span>
+        <div class="lg"><span class="li"><span class="ld" style="background:${CHART_TRAF}"></span>Vendas/dia</span></div>
+      </div>
+      <div style="position:relative"><canvas id="c-vendas-traf"></canvas><div class="tip" id="t-vendas-traf"></div></div>
+    </div>
+    <div class="cc" style="position:relative">
+      <div class="ch">
+        <span class="ct">Vendas por dia — Orgânico</span>
+        <div class="lg"><span class="li"><span class="ld" style="background:${CHART_ORG}"></span>Vendas/dia</span></div>
+      </div>
+      <div style="position:relative"><canvas id="c-vendas-org"></canvas><div class="tip" id="t-vendas-org"></div></div>
+    </div>
+    ${daily.length===0?`<div class="err" style="margin-top:12px">Nenhuma venda no período selecionado.</div>`:""}
+    <div class="foot">OFRR · Carrinho · conectado ao Google Sheets</div>`;
+  requestAnimationFrame(()=>{
+    const box1=document.getElementById("c-vendas-traf")?.parentElement;
+    if(box1)drawBarSingle("c-vendas-traf",daily,"vendasTraf",CHART_TRAF,box1.clientWidth,200);
+    const box2=document.getElementById("c-vendas-org")?.parentElement;
+    if(box2)drawBarSingle("c-vendas-org",daily,"vendasOrg",CHART_ORG,box2.clientWidth,200);
+    setupTip("c-vendas-traf","t-vendas-traf",daily,[{name:"Vendas tráfego",color:CHART_TRAF,key:"vendasTraf",fmt:v=>String(v)}],40,12);
+    setupTip("c-vendas-org","t-vendas-org",daily,[{name:"Vendas orgânico",color:CHART_ORG,key:"vendasOrg",fmt:v=>String(v)}],40,12);
+  });
+}
+
 // ── Render: Resumo diário ──────────────────────────────────────────────────
 function renderResumo(){
   const el=document.getElementById("page-resumo");if(!el)return;
@@ -1173,6 +1291,7 @@ function render(){
   renderHeader();
   if(S.currentPage==="principal")renderPrincipal();
   else if(S.currentPage==="anuncios")renderAnuncios();
+  else if(S.currentPage==="vendas")renderVendas();
   else if(S.currentPage==="resumo")renderResumo();
 }
 
