@@ -156,8 +156,8 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
   </div>
   <nav class="hdr-tabs" id="hdr-tabs">
     <button class="htab htab-active" onclick="navTo('principal')">⊞ Principal</button>
-    <button class="htab" onclick="navTo('anuncios')">◈ Campanhas / Anúncios</button>
     <button class="htab" onclick="navTo('vendas')">💰 Vendas</button>
+    <button class="htab" onclick="navTo('anuncios')">◈ Campanhas / Anúncios</button>
     <button class="htab" onclick="navTo('resumo')">📋 Resumo diário</button>
   </nav>
   <div class="hdr-right">
@@ -181,8 +181,8 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
 <div class="app-content">
   <div class="sw" id="loading"><div class="sp"></div><p class="st">Carregando dados...</p></div>
   <div id="page-principal" class="page active"></div>
-  <div id="page-anuncios"  class="page"></div>
   <div id="page-vendas"    class="page"></div>
+  <div id="page-anuncios"  class="page"></div>
   <div id="page-resumo"    class="page"></div>
 </div>
 
@@ -210,6 +210,11 @@ const METAS_RESUMO = {
   cpm:    {val:56.03, higher:false}, // quanto menor, melhor
   txForm: {val:9.67,  higher:true},  // quanto maior, melhor
 };
+
+// ── Constantes fixas usadas nas métricas da aba Vendas ─────────────────────
+const LISTA_LEADS_TOTAL   = 7040;   // tamanho da lista de leads considerada
+const TICKET_MEDIO        = 2480;   // R$ por venda, usado no faturamento
+const INVESTIMENTO_ROAS   = 35436;  // R$ investido considerado no cálculo do ROAS
 
 // Chart colors
 const CHART_INV  = "#3b82f6";
@@ -677,7 +682,7 @@ function copyAdResumo(){
 function renderHeader(){
   const p=S.currentPage;
   document.querySelectorAll("#hdr-tabs .htab").forEach((btn,i)=>{
-    const ids=["principal","anuncios","vendas","resumo"];
+    const ids=["principal","vendas","anuncios","resumo"];
     btn.classList.toggle("htab-active",ids[i]===p);
   });
   const per=getCurrentPeriod();
@@ -1088,6 +1093,14 @@ function renderVendas(){
   const daily=getDailyVendas(S.startDate,S.endDate);
   const totTraf=daily.reduce((a,d)=>a+d.vendasTraf,0);
   const totOrg=daily.reduce((a,d)=>a+d.vendasOrg,0);
+
+  // Métricas de conversão/faturamento — sempre sobre o total de vendas (todo o período)
+  const totalFichasAllTime=Object.values(S.trafego).reduce((a,b)=>a+b,0)+Object.values(S.organico).reduce((a,b)=>a+b,0);
+  const convLista  = LISTA_LEADS_TOTAL>0 ? (S.vendasTotal/LISTA_LEADS_TOTAL)*100 : 0;
+  const convFichas = totalFichasAllTime>0 ? (S.vendasTotal/totalFichasAllTime)*100 : 0;
+  const faturamento= S.vendasTotal*TICKET_MEDIO;
+  const roas       = INVESTIMENTO_ROAS>0 ? faturamento/INVESTIMENTO_ROAS : 0;
+
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:6px">
       <div>
@@ -1096,11 +1109,17 @@ function renderVendas(){
       </div>
     </div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
-    <div class="g4" style="margin-bottom:16px">
+    <div class="g4" style="margin-bottom:13px">
       ${kpiCard("Vendas (total)",S.vendasTotal.toLocaleString("pt-BR"),"todo o período","var(--text-strong)")}
       ${kpiCard("Vendas tráfego",totTraf.toLocaleString("pt-BR"),"no período selecionado","var(--text-strong)")}
       ${kpiCard("Vendas orgânico",totOrg.toLocaleString("pt-BR"),"no período selecionado","var(--text-strong)")}
       ${kpiCard("Não identificadas",S.vendasUnmatched.toLocaleString("pt-BR"),"sem ficha correspondente","var(--muted)")}
+    </div>
+    <div class="g4" style="margin-bottom:16px">
+      ${kpiCard("Conversão lista em vendas",fPct(convLista),`${S.vendasTotal} / ${LISTA_LEADS_TOTAL.toLocaleString("pt-BR")} leads`,"var(--text-strong)")}
+      ${kpiCard("Conversão fichas em vendas",fPct(convFichas),`${S.vendasTotal} / ${totalFichasAllTime.toLocaleString("pt-BR")} fichas`,"var(--text-strong)")}
+      ${kpiCard("Faturamento",fBRL(faturamento),`${S.vendasTotal} × ${fBRL(TICKET_MEDIO)}`,"var(--text-strong)")}
+      ${kpiCard("ROAS",roas.toFixed(2).replace(".",",")+"x",`${fBRL(faturamento)} / ${fBRL(INVESTIMENTO_ROAS)}`,"var(--text-strong)")}
     </div>
     <div class="cc" style="position:relative;margin-bottom:12px">
       <div class="ch">
