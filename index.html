@@ -1164,7 +1164,6 @@ function renderPrincipal(){
       <div style="display:flex;align-items:center;gap:8px"><span style="font-size:10px;color:var(--hint);min-width:76px">Temperatura:</span>${tempToggle()}</div>
     </div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
-    <div class="notice">🔧 Temperatura é extraída do nome da campanha (contém "quente"/"morno"/"frio") — investimento, cliques e impressões já respeitam esse filtro. "Planejado até hoje"/"atingimento da meta" comparam com o plano da etapa Captação (aba Planejamento), que não é segmentado por canal/temperatura.</div>
 
     <div class="g3" style="margin-bottom:13px">
       ${kpiCard("Investimento",fBRL(pt.spend),ch==="organico"?"sem tráfego pago":`planejado até hoje: ${fBRL(plano.investimento)}`,ch==="organico"?"var(--text-strong)":investPlanoColor,false,ch==="organico"?null:pt.spend,plano.investimento>0?plano.investimento:null,false)}
@@ -1198,7 +1197,7 @@ function renderPrincipal(){
         </div>
       </div>
       <div style="position:relative"><canvas id="c-dual"></canvas><div class="tip" id="t-dual"></div></div>
-    </div>`:`<div class="notice" style="margin-bottom:12px">Canal Orgânico não tem investimento associado (fonte sem verba de mídia) — gráfico de investimento × custo/lead ocultado.${pt.leads===0?" Nenhum lead orgânico identificado no período (ainda não apareceu utm_source de fonte orgânica nesta base — hoje só há tráfego, com ou sem UTM).":""}</div>`}
+    </div>`:""}
     <div class="cc" style="position:relative;margin-bottom:12px">
       <div class="ch">
         <span class="ct">Volume de leads</span>
@@ -1711,7 +1710,6 @@ ${textBlock("Hoje",hoje,fDateBR(today),ch_)}`;
       </button>
     </div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
-    <div class="notice">🔧 Faltam 3 coisas pra fechar 100%: (1) planejamento de investimento/cadastros por data (pra "atingimento vs. plano"), (2) Landing Page Views separado de cliques (pra Tx conv Pg cadastro exata — hoje é aproximada por leads/cliques), (3) Connect Rate (não existe na Base Meta atual). Assim que tiver esses dados, é só me passar.</div>
     <div style="display:grid;grid-template-columns:1fr 420px;gap:20px;align-items:start">
       <div>
         ${block("📶 Total - Consolidado",tot,false)}
@@ -1883,7 +1881,6 @@ function renderMetricasTrafego(){
     </div>
     <div style="margin-bottom:14px">${metricasTempToggle()}</div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
-    <div class="notice">🔧 "Tx Pág → Cadastro" é aproximada por leads/cliques (a Base Meta atual não separa Landing Page Views de cliques). "Connect Rate" ainda não existe nessa base — aparece "—" até esse dado chegar.</div>
 
     <div class="section-lbl" style="margin-top:0">Hoje — ${fDateBR(today)}</div>
     <div class="g4" style="margin-bottom:10px">${panelCards(hoje)}</div>
@@ -1952,7 +1949,6 @@ function renderStagePage(pageId,label,planArr){
         <div class="hdr-sub">em construção</div>
       </div>
     </div>
-    <div class="notice">🔧 Aba ainda em branco — o planejamento de investimento dessa etapa já está na aba "Planejado/Realizado". O conteúdo específico de ${label} entra aqui assim que essa etapa do lançamento começar a rodar.</div>
     <div class="foot">OFRR · ${label}</div>`;
 }
 
@@ -2055,7 +2051,6 @@ function renderPlanoReal(){
       <div style="display:flex;align-items:center;gap:16px">${statusLegend()}</div>
     </div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
-    <div class="notice">🔧 Planejamento inserido manualmente a partir da planilha do lançamento. Investimento/leads realizados vêm da Base Meta e Base leads atuais (hoje só cobrem a Captação) — dias/etapas futuras aparecem como "—" até o dado existir.</div>
 
     <div class="section-lbl" style="margin-top:0">Resumo por etapa (investimento)</div>
     <div class="cc" style="padding:0;overflow:hidden;margin-bottom:22px">
