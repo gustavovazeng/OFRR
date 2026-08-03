@@ -324,6 +324,7 @@ const S = {
   leadsTemp:"todos",         // filtro de temperatura exclusivo da aba Análise qualificação
   metricasTemp:"todos",      // filtro de temperatura exclusivo da aba Métricas do Tráfego
   showGapVolume:false,       // liga/desliga a linha de GAP no gráfico "Volume de leads"
+  faixaSel:{A:true,B:true,C:true,D:true}, // quais faixas aparecem no gráfico "% Faixa por dia"
   currentPage:"captacao",     // "captacao" | "aquecimento" | "lembrete" | "aulas" | "carrinho" | "planoreal" | "resumo"
   currentSubPage:"principal", // só usado quando currentPage==="captacao": "principal" | "anuncios" | "metricas" | "leads"
   updated:null,
@@ -1138,6 +1139,17 @@ function barRow(lbl,n,total,color){
 function setPrincipalChannel(c){ S.principalChannel=c; renderPrincipal(); }
 function setPrincipalTemp(t){ S.principalTemp=t; renderPrincipal(); }
 function toggleGapVolume(){ S.showGapVolume=!S.showGapVolume; renderPrincipal(); }
+function toggleFaixaSel(letter){ S.faixaSel[letter]=!S.faixaSel[letter]; renderPrincipal(); }
+// Botões-seletor de faixa (A/B/C/D) — mesmo padrão visual do botão de GAP,
+// mas em vez de liga/desliga único, cada faixa pode ser ligada/desligada
+// independente pra filtrar quais linhas aparecem no gráfico "% Faixa por dia".
+function faixaSelButtons(){
+  return ["A","B","C","D"].map(l=>{
+    const on=S.faixaSel[l], color=CHART_FAIXA[l];
+    return `<button onclick="toggleFaixaSel('${l}')" style="font-size:10px;padding:3px 10px;border-radius:6px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;
+      ${on?`background:${color}22;border:1px solid ${color}88;color:${color}`:`background:transparent;border:1px solid rgba(255,255,255,.15);color:var(--hint)`}">Faixa ${l}</button>`;
+  }).join("");
+}
 function channelToggle(){
   const CH=[["total","Total"],["trafego","Tráfego"],["organico","Orgânico"]];
   return `<div class="presets">${CH.map(([k,lbl])=>
@@ -1243,14 +1255,10 @@ function renderPrincipal(){
     <div class="cc" style="position:relative;margin-bottom:12px">
       <div class="ch">
         <span class="ct">% Faixa por dia — ${chLabel} · ${tempLabel}</span>
-        <div class="lg">
-          <span class="li"><span class="ll" style="background:${CHART_FAIXA.A}"></span>Faixa A</span>
-          <span class="li"><span class="ll" style="background:${CHART_FAIXA.B}"></span>Faixa B</span>
-          <span class="li"><span class="ll" style="background:${CHART_FAIXA.C}"></span>Faixa C</span>
-          <span class="li"><span class="ll" style="background:${CHART_FAIXA.D}"></span>Faixa D</span>
-        </div>
+        <div class="lg">${faixaSelButtons()}</div>
       </div>
       <div style="position:relative"><canvas id="c-faixa"></canvas><div class="tip" id="t-faixa"></div></div>
+      ${Object.values(S.faixaSel).every(v=>!v)?`<div style="font-size:10px;color:var(--hint);margin-top:8px">Selecione ao menos uma faixa pra ver a linha no gráfico.</div>`:""}
     </div>
 
     <div class="cc" style="position:relative">
@@ -1282,14 +1290,11 @@ function renderPrincipal(){
 
     const dailyQ=getDailyQuality(S.startDate,S.endDate,ch,temp);
     const box3=document.getElementById("c-faixa")?.parentElement;
-    if(box3)drawMultiLine("c-faixa",dailyQ,[
-      {key:"faixaA",color:CHART_FAIXA.A},{key:"faixaB",color:CHART_FAIXA.B},
-      {key:"faixaC",color:CHART_FAIXA.C},{key:"faixaD",color:CHART_FAIXA.D}],box3.clientWidth,220);
-    setupTip("c-faixa","t-faixa",dailyQ,[
-      {name:"Faixa A",color:CHART_FAIXA.A,key:"faixaA",fmt:fPctOrDash},
-      {name:"Faixa B",color:CHART_FAIXA.B,key:"faixaB",fmt:fPctOrDash},
-      {name:"Faixa C",color:CHART_FAIXA.C,key:"faixaC",fmt:fPctOrDash},
-      {name:"Faixa D",color:CHART_FAIXA.D,key:"faixaD",fmt:fPctOrDash}],36,12);
+    const faixaKeys={A:"faixaA",B:"faixaB",C:"faixaC",D:"faixaD"};
+    const faixaSeries=["A","B","C","D"].filter(l=>S.faixaSel[l]).map(l=>({key:faixaKeys[l],color:CHART_FAIXA[l]}));
+    if(box3)drawMultiLine("c-faixa",dailyQ,faixaSeries,box3.clientWidth,220);
+    setupTip("c-faixa","t-faixa",dailyQ,["A","B","C","D"].filter(l=>S.faixaSel[l]).map(l=>
+      ({name:"Faixa "+l,color:CHART_FAIXA[l],key:faixaKeys[l],fmt:fPctOrDash})),36,12);
 
     const box4=document.getElementById("c-conhece")?.parentElement;
     if(box4)drawMultiLine("c-conhece",dailyQ,[
