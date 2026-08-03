@@ -1571,6 +1571,14 @@ function renderLeads(){
 function planForDate(dateISO){
   return PLANO_DIARIO.find(p=>p.date===dateISO)||null;
 }
+// Meta total do lançamento (soma do plano inteiro, não só até hoje) — usada
+// só pro "% de atingimento" do bloco Total-Consolidado do Resumo diário.
+function planoTotalLancamento(){
+  return{
+    investimento:PLANO_DIARIO.reduce((a,p)=>a+p.investimento,0),
+    leads:PLANO_DIARIO.reduce((a,p)=>a+p.leads,0),
+  };
+}
 function renderResumo(){
   const el=document.getElementById("page-resumo");if(!el)return;
   const _fid=document.activeElement?.id;
@@ -1631,9 +1639,9 @@ function renderResumo(){
       </span>
     </div>`;
   }
-  function block(title,m,isHoje,dateLbl,plan){
+  function block(title,m,isHoje,dateLbl,plan,atingimentoPlan){
     const c=cplInfo(m);
-    const pctAtingimento=(plan&&plan.leads>0)?(m.leads/plan.leads)*100:null;
+    const pctAtingimento=(atingimentoPlan&&atingimentoPlan.leads>0)?(m.leads/atingimentoPlan.leads)*100:null;
     return `
     <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)">
@@ -1645,7 +1653,7 @@ function renderResumo(){
       ${row("Custo por cadastro AC Tráfego",c.txt,`🎯 ${fBRL(META_CPL)}`,c.emoji)}
       <div style="height:6px"></div>
       ${row("Cadastros no AC Orgânico",m.leadsOrganico,"","")}
-      ${row("Cadastros no AC Total",m.leads,plan?`atingimento: ${fPct(pctAtingimento)}`:"sem plano p/ este período","")}
+      ${row("Cadastros no AC Total",m.leads,pctAtingimento!=null?`atingimento: ${fPct(pctAtingimento)}`:"","")}
       <div style="height:10px"></div>
       ${row("% público quente + morno",fPctOrDash(m.quenteMornoPct),`🎯 ${METAS_RESUMO.quenteMorno.val}%`,metaEmoji(m.quenteMornoPct,METAS_RESUMO.quenteMorno.val,METAS_RESUMO.quenteMorno.higher))}
       <div style="height:10px"></div>
@@ -1669,8 +1677,8 @@ function renderResumo(){
   }
 
   const ct=cplInfo(tot), co=cplInfo(ontem), ch_=cplInfo(hoje);
-  function textBlock(label,m,dateLbl,c,plan){
-    const pctAtingimento=(plan&&plan.leads>0)?(m.leads/plan.leads)*100:null;
+  function textBlock(label,m,dateLbl,c,plan,atingimentoPlan){
+    const pctAtingimento=(atingimentoPlan&&atingimentoPlan.leads>0)?(m.leads/atingimentoPlan.leads)*100:null;
     return `${label}${dateLbl?`\t${dateLbl}`:""}
 
 Investimento:\t${fBRL(m.spend)}\t${plan?`(plan.: ${fBRL(plan.investimento)})`:"(sem plano p/ este período)"}
@@ -1679,7 +1687,7 @@ Cadastros no AC Tráfego:\t${m.leadsTrafego}\t${plan?`(plan.: ${plan.leads})`:"(
 Custo por cadastro AC Tráfego:\t${c.txt}\t${c.emoji} (🎯: ${fBRL(META_CPL)})
 
 Cadastros no AC Orgânico:\t${m.leadsOrganico}
-Cadastros no AC Total:\t${m.leads}\t${plan?`(atingimento: ${fPct(pctAtingimento)})`:"(sem plano p/ este período)"}
+Cadastros no AC Total:\t${m.leads}${pctAtingimento!=null?`\t(atingimento: ${fPct(pctAtingimento)})`:""}
 
 % público quente + morno:\t${fPctOrDash(m.quenteMornoPct)}\t${metaEmoji(m.quenteMornoPct,METAS_RESUMO.quenteMorno.val,METAS_RESUMO.quenteMorno.higher)} (🎯: ${METAS_RESUMO.quenteMorno.val}%)
 
@@ -1703,7 +1711,7 @@ Connect Rate:\t—\t(🎯: ${METAS_RESUMO.connectRate.val}% · dado indisponíve
   const resumoText=
 `*OFRR ago/26 - Resumo consolidado*
 
-${textBlock("*-> Total*",tot,"",ct,planoAteHoje())}
+${textBlock("*-> Total*",tot,"",ct,planoAteHoje(),planoTotalLancamento())}
 ---------------------
 ${textBlock("Ontem",ontem,fDateBR(yest),co,planForDate(yest))}
 ---------------------
@@ -1722,7 +1730,7 @@ ${textBlock("Hoje",hoje,fDateBR(today),ch_,planForDate(today))}`;
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
     <div style="display:grid;grid-template-columns:1fr 420px;gap:20px;align-items:start">
       <div>
-        ${block("📶 Total - Consolidado",tot,false,"",planoAteHoje())}
+        ${block("📶 Total - Consolidado",tot,false,"",planoAteHoje(),planoTotalLancamento())}
         ${block("⬅️ Ontem",ontem,false,fDateBR(yest),planForDate(yest))}
         ${block("⬇️ Hoje",hoje,true,fDateBR(today),planForDate(today))}
       </div>
