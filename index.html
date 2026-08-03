@@ -1564,6 +1564,13 @@ function renderLeads(){
 }
 
 // ── Render: Resumo diário ──────────────────────────────────────────────────
+// Plano (Captação) de um dia específico — usado no Resumo diário pra
+// comparar Ontem/Hoje contra a linha daquele dia na planilha de planejamento.
+// Retorna null se a data estiver fora do período planejado (ex.: antes do
+// lançamento começar ou depois do fim da Captação).
+function planForDate(dateISO){
+  return PLANO_DIARIO.find(p=>p.date===dateISO)||null;
+}
 function renderResumo(){
   const el=document.getElementById("page-resumo");if(!el)return;
   const _fid=document.activeElement?.id;
@@ -1608,7 +1615,7 @@ function renderResumo(){
       <span style="font-size:14px;min-width:90px;text-align:right">${emoji||""}<span style="font-size:10px;color:var(--hint);margin-left:4px">${metaStr||""}</span></span>
     </div>`;
   }
-  function investRowHoje(){
+  function investRowHoje(plan){
     return `<div style="display:grid;grid-template-columns:220px 1fr auto;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:center">
       <span style="color:var(--muted);font-size:12px">Investimento</span>
       <input id="manual-spend-input"
@@ -1620,23 +1627,25 @@ function renderResumo(){
         style="font-family:'JetBrains Mono',monospace;font-size:13px;color:${isManual?'#fbbf24':'var(--text-strong)'};background:transparent;border:none;border-bottom:1px solid ${isManual?'rgba(251,191,36,.4)':'rgba(255,255,255,.15)'};outline:none;padding:2px 0;width:100%"/>
       <span style="font-size:11px;min-width:90px;text-align:right">
         ${isManual?`<button onclick="clearManualSpendHoje()" style="font-size:10px;padding:3px 9px;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);color:#fbbf24;border-radius:5px;cursor:pointer;font-family:'DM Sans',sans-serif">↩ Restaurar</button>`:""}
+        ${plan?`<div style="font-size:10px;color:var(--hint);margin-top:3px">plan.: ${fBRL(plan.investimento)}</div>`:""}
       </span>
     </div>`;
   }
-  function block(title,m,isHoje,dateLbl){
+  function block(title,m,isHoje,dateLbl,plan){
     const c=cplInfo(m);
+    const pctAtingimento=(plan&&plan.leads>0)?(m.leads/plan.leads)*100:null;
     return `
     <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)">
         <span style="font-size:13px;font-weight:700;color:var(--text-strong)">${title}</span>
         ${dateLbl?`<span style="font-size:11px;color:var(--hint);font-family:'JetBrains Mono',monospace">${dateLbl}</span>`:""}
       </div>
-      ${isHoje?investRowHoje():row("Investimento",fBRL(m.spend),"plan.: aguardando 🔧","")}
-      ${row("Cadastros no AC Tráfego",m.leadsTrafego,"plan.: aguardando 🔧","")}
+      ${isHoje?investRowHoje(plan):row("Investimento",fBRL(m.spend),plan?`plan.: ${fBRL(plan.investimento)}`:"sem plano p/ este período","")}
+      ${row("Cadastros no AC Tráfego",m.leadsTrafego,plan?`plan.: ${plan.leads.toLocaleString("pt-BR")}`:"sem plano p/ este período","")}
       ${row("Custo por cadastro AC Tráfego",c.txt,`🎯 ${fBRL(META_CPL)}`,c.emoji)}
       <div style="height:6px"></div>
       ${row("Cadastros no AC Orgânico",m.leadsOrganico,"","")}
-      ${row("Cadastros no AC Total",m.leads,"atingimento: aguardando plano 🔧","")}
+      ${row("Cadastros no AC Total",m.leads,plan?`atingimento: ${fPct(pctAtingimento)}`:"sem plano p/ este período","")}
       <div style="height:10px"></div>
       ${row("% público quente + morno",fPctOrDash(m.quenteMornoPct),`🎯 ${METAS_RESUMO.quenteMorno.val}%`,metaEmoji(m.quenteMornoPct,METAS_RESUMO.quenteMorno.val,METAS_RESUMO.quenteMorno.higher))}
       <div style="height:10px"></div>
@@ -1660,16 +1669,17 @@ function renderResumo(){
   }
 
   const ct=cplInfo(tot), co=cplInfo(ontem), ch_=cplInfo(hoje);
-  function textBlock(label,m,dateLbl,c){
+  function textBlock(label,m,dateLbl,c,plan){
+    const pctAtingimento=(plan&&plan.leads>0)?(m.leads/plan.leads)*100:null;
     return `${label}${dateLbl?`\t${dateLbl}`:""}
 
-Investimento:\t${fBRL(m.spend)}\t(plan.: aguardando)
-Cadastros no AC Tráfego:\t${m.leadsTrafego}\t(plan.: aguardando)
+Investimento:\t${fBRL(m.spend)}\t${plan?`(plan.: ${fBRL(plan.investimento)})`:"(sem plano p/ este período)"}
+Cadastros no AC Tráfego:\t${m.leadsTrafego}\t${plan?`(plan.: ${plan.leads})`:"(sem plano p/ este período)"}
 
 Custo por cadastro AC Tráfego:\t${c.txt}\t${c.emoji} (🎯: ${fBRL(META_CPL)})
 
 Cadastros no AC Orgânico:\t${m.leadsOrganico}
-Cadastros no AC Total:\t${m.leads}\t(atingimento: aguardando plano)
+Cadastros no AC Total:\t${m.leads}\t${plan?`(atingimento: ${fPct(pctAtingimento)})`:"(sem plano p/ este período)"}
 
 % público quente + morno:\t${fPctOrDash(m.quenteMornoPct)}\t${metaEmoji(m.quenteMornoPct,METAS_RESUMO.quenteMorno.val,METAS_RESUMO.quenteMorno.higher)} (🎯: ${METAS_RESUMO.quenteMorno.val}%)
 
@@ -1693,11 +1703,11 @@ Connect Rate:\t—\t(🎯: ${METAS_RESUMO.connectRate.val}% · dado indisponíve
   const resumoText=
 `*OFRR ago/26 - Resumo consolidado*
 
-${textBlock("*-> Total*",tot,"",ct)}
+${textBlock("*-> Total*",tot,"",ct,planoAteHoje())}
 ---------------------
-${textBlock("Ontem",ontem,fDateBR(yest),co)}
+${textBlock("Ontem",ontem,fDateBR(yest),co,planForDate(yest))}
 ---------------------
-${textBlock("Hoje",hoje,fDateBR(today),ch_)}`;
+${textBlock("Hoje",hoje,fDateBR(today),ch_,planForDate(today))}`;
 
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:16px">
@@ -1712,9 +1722,9 @@ ${textBlock("Hoje",hoje,fDateBR(today),ch_)}`;
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
     <div style="display:grid;grid-template-columns:1fr 420px;gap:20px;align-items:start">
       <div>
-        ${block("📶 Total - Consolidado",tot,false)}
-        ${block("⬅️ Ontem",ontem,false,fDateBR(yest))}
-        ${block("⬇️ Hoje",hoje,true,fDateBR(today))}
+        ${block("📶 Total - Consolidado",tot,false,"",planoAteHoje())}
+        ${block("⬅️ Ontem",ontem,false,fDateBR(yest),planForDate(yest))}
+        ${block("⬇️ Hoje",hoje,true,fDateBR(today),planForDate(today))}
       </div>
       <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;position:sticky;top:70px">
         <pre id="resumo-preview" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text);white-space:pre-wrap;line-height:1.8;margin:0;user-select:all">${resumoText.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</pre>
