@@ -454,6 +454,32 @@ function campaignTemperature(campName){
   if(c.includes("frio"))return "Frio";
   return "";
 }
+// Etapa do lançamento a que uma campanha pertence, extraída do NOME DA
+// CAMPANHA (mesmo princípio da temperatura) — ex.: campanha de Lembrete
+// contém "lembrete" no nome, Aquecimento contém "aquecimento", etc. Sem
+// nenhuma dessas palavras, assume Captação (é a etapa atual do lançamento e
+// a maioria das campanhas de hoje são dela). Usado pra não deixar o
+// investimento de uma campanha vazar pro "realizado" de outra etapa só
+// porque a data bate — cada real é filtrado por campanha, não só por data.
+function campaignStage(campName){
+  const c=String(campName||"").toLowerCase();
+  if(c.includes("lembrete"))return "Lembrete";
+  if(c.includes("aquecimento"))return "Aquecimento";
+  if(c.includes("aula"))return "Aulas";
+  if(c.includes("carrinho"))return "Carrinho";
+  return "Captação";
+}
+// Investimento realizado de uma etapa numa data específica — soma só as
+// linhas da Base Meta cuja campanha pertence àquela etapa (via
+// campaignStage), não o gasto do dia inteiro.
+function stageSpendForDate(stage,date){
+  return S.metaRows.filter(r=>r.date===date&&campaignStage(r.campName)===stage).reduce((a,r)=>a+r.spend,0);
+}
+// Investimento realizado total de uma etapa (todas as datas) — usado no
+// "Resumo por etapa" do Planejado/Realizado.
+function totalSpendForStage(stage){
+  return S.metaRows.filter(r=>campaignStage(r.campName)===stage).reduce((a,r)=>a+r.spend,0);
+}
 
 // ── Load data ─────────────────────────────────────────────────────────────
 async function loadData(){
@@ -1979,9 +2005,8 @@ function renderPlanoReal(){
   const plano=PLANO_DIARIO;
 
   const rows=plano.map(p=>{
-    const m=S.meta[p.date];
     const isFuture=p.date>today;
-    const investReal=isFuture?null:(m?m.spend:0);
+    const investReal=isFuture?null:stageSpendForDate("Captação",p.date);
     const leadsReal=isFuture?null:(S.leadsByDate[p.date]||0);
     return{...p,isFuture,isToday:p.date===today,investReal,leadsReal};
   });
@@ -1997,36 +2022,42 @@ function renderPlanoReal(){
 
   const diasTotal=plano.length;
 
-  // Comparação justa: realizado (sempre "até hoje", já que não existe dado
-  // futuro) contra o plano acumulado até hoje — não contra o plano do
-  // período inteiro, que ainda não terminou.
-  const investAteHojeColor=investPlanAteHoje>0?statusColor(totalInvestReal,investPlanAteHoje,false):"var(--text-strong)";
+  // Comparação de investimento nesta aba: quanto MAIS investido em relação
+  // ao plano, melhor (ficar abaixo do plano é ruim — sinal de ritmo de
+  // verba atrasado); por isso higherIsBetter=true aqui (ao contrário da
+  // Principal, onde investimento menor é mais eficiente).
+  const investAteHojeColor=investPlanAteHoje>0?statusColor(totalInvestReal,investPlanAteHoje,true):"var(--text-strong)";
   const leadsAteHojeColor=leadsPlanAteHoje>0?statusColor(totalLeadsReal,leadsPlanAteHoje,true):"var(--text-strong)";
 
-  // Resumo por etapa — só investimento (as demais etapas não têm meta de leads)
+  // Resumo por etapa — só investimento (as demais etapas não têm meta de leads).
+  // "real" de cada etapa vem só das campanhas cujo NOME bate com aquela etapa
+  // (via campaignStage), não do gasto total da Base Meta no período do plano
+  // — senão o investimento de Captação vazaria pro "realizado" de Lembrete
+  // etc. só por coincidência de data.
   const etapas=[
-    {nome:"Captação",plan:totalInvestPlan,real:totalInvestReal},
-    {nome:"Aquecimento",plan:PLANO_AQUECIMENTO.reduce((a,p)=>a+p.investimento,0)||PLANO_AQUECIMENTO_TOTAL,real:PLANO_AQUECIMENTO.reduce((a,p)=>a+(S.meta[p.date]?.spend||0),0)},
-    {nome:"Lembrete",plan:PLANO_LEMBRETE.reduce((a,p)=>a+p.investimento,0),real:PLANO_LEMBRETE.reduce((a,p)=>a+(S.meta[p.date]?.spend||0),0)},
-    {nome:"Aulas",plan:PLANO_AULAS.reduce((a,p)=>a+p.investimento,0),real:PLANO_AULAS.reduce((a,p)=>a+(S.meta[p.date]?.spend||0),0)},
-    {nome:"Carrinho",plan:PLANO_CARRINHO.reduce((a,p)=>a+p.investimento,0),real:PLANO_CARRINHO.reduce((a,p)=>a+(S.meta[p.date]?.spend||0),0)},
+    {nome:"Captação",plan:totalInvestPlan,real:totalSpendForStage("Captação")},
+    {nome:"Aquecimento",plan:PLANO_AQUECIMENTO.reduce((a,p)=>a+p.investimento,0)||PLANO_AQUECIMENTO_TOTAL,real:totalSpendForStage("Aquecimento")},
+    {nome:"Lembrete",plan:PLANO_LEMBRETE.reduce((a,p)=>a+p.investimento,0),real:totalSpendForStage("Lembrete")},
+    {nome:"Aulas",plan:PLANO_AULAS.reduce((a,p)=>a+p.investimento,0),real:totalSpendForStage("Aulas")},
+    {nome:"Carrinho",plan:PLANO_CARRINHO.reduce((a,p)=>a+p.investimento,0),real:totalSpendForStage("Carrinho")},
   ];
   const etapasTotalPlan=etapas.reduce((a,e)=>a+e.plan,0);
   const etapasTotalReal=etapas.reduce((a,e)=>a+e.real,0);
 
   // Tabela diária de uma etapa sem meta de leads (Aquecimento/Lembrete/
   // Aulas/Carrinho) — só Investimento Planejado × Realizado, mesmo padrão
-  // visual da tabela de Captação. Investimento realizado vem da Base Meta
-  // atual, que hoje só cobre datas de Captação — por isso aparece "—" até
-  // a Base Meta trazer dados dessas datas futuras.
-  function stageTable(label,planArr){
+  // visual da tabela de Captação. Investimento realizado é filtrado por
+  // CAMPANHA da etapa (via campaignStage), não pelo gasto do dia inteiro —
+  // assim uma campanha de Captação rodando na mesma data não conta como
+  // "realizado" de Lembrete/Aquecimento só por coincidência de data.
+  function stageTable(label,stageName,planArr){
     if(planArr.length===0){
       return `<div class="section-lbl">${label}</div>
         <div class="cc" style="color:var(--hint);font-size:12px;padding:18px 20px;margin-bottom:22px">Sem detalhamento diário informado ainda para esta etapa.</div>`;
     }
     const stageRows=planArr.map(p=>{
-      const m=S.meta[p.date];
-      const real=m?m.spend:null;
+      const isFuture=p.date>today;
+      const real=isFuture?null:stageSpendForDate(stageName,p.date);
       return{...p,real,isToday:p.date===today};
     });
     const stagePlanTotal=planArr.reduce((a,p)=>a+p.investimento,0);
@@ -2042,11 +2073,13 @@ function renderPlanoReal(){
           <th style="text-align:right">Investimento Realizado</th>
         </tr></thead>
         <tbody>
-          ${stageRows.map(r=>`<tr style="background:${r.isToday?"rgba(59,130,246,.08)":"transparent"}">
+          ${stageRows.map(r=>{
+            const investColor=r.real==null?"var(--hint)":statusColor(r.real,r.investimento,true);
+            return `<tr style="background:${r.isToday?"rgba(59,130,246,.08)":"transparent"}">
             <td class="mono">${diaSemana(r.date)}, ${fDate(r.date)}${r.isToday?` <span title="hoje">👈</span>`:""}</td>
             <td class="mono" style="text-align:right">${fBRL(r.investimento)}</td>
-            <td class="mono" style="text-align:right;color:${r.real==null?"var(--hint)":"var(--text-strong)"}">${r.real==null?"—":fBRL(r.real)}</td>
-          </tr>`).join("")}
+            <td class="mono" style="text-align:right;color:${investColor}">${r.real==null?"—":fBRL(r.real)}</td>
+          </tr>`;}).join("")}
         </tbody>
         <tfoot>
           <tr style="border-top:2px solid var(--border-h)">
@@ -2079,7 +2112,7 @@ function renderPlanoReal(){
           ${etapas.map(e=>`<tr>
             <td>${e.nome}</td>
             <td class="mono" style="text-align:right">${fBRL(e.plan)}</td>
-            <td class="mono" style="text-align:right;color:${e.real>0?"var(--text-strong)":"var(--hint)"}">${e.real>0?fBRL(e.real):"—"}</td>
+            <td class="mono" style="text-align:right;color:${e.real>0?statusColor(e.real,e.plan,true):"var(--hint)"}">${e.real>0?fBRL(e.real):"—"}</td>
           </tr>`).join("")}
         </tbody>
         <tfoot>
@@ -2096,7 +2129,7 @@ function renderPlanoReal(){
     <div class="section-lbl">Captação — detalhe diário (única etapa com meta de leads)</div>
     <div class="g4" style="margin-bottom:20px">
       ${kpiCard("Investimento Planejado",fBRL(totalInvestPlan),`${diasTotal} dias`,"var(--text-strong)")}
-      ${kpiCard("Investimento Realizado",fBRL(totalInvestReal),`Investimento planejado até hoje: ${fBRL(investPlanAteHoje)}`,investAteHojeColor,false,totalInvestReal,investPlanAteHoje,false)}
+      ${kpiCard("Investimento Realizado",fBRL(totalInvestReal),`Investimento planejado até hoje: ${fBRL(investPlanAteHoje)}`,investAteHojeColor,false,totalInvestReal,investPlanAteHoje,true)}
       ${kpiCard("Leads Planejados",totalLeadsPlan.toLocaleString("pt-BR"),`${diasTotal} dias`,"var(--text-strong)")}
       ${kpiCard("Leads Realizados",totalLeadsReal.toLocaleString("pt-BR"),`Leads planejados até hoje: ${leadsPlanAteHoje.toLocaleString("pt-BR")}`,leadsAteHojeColor,false,totalLeadsReal,leadsPlanAteHoje,true)}
     </div>
@@ -2113,7 +2146,7 @@ function renderPlanoReal(){
         </tr></thead>
         <tbody>
           ${rows.map(r=>{
-            const investColor=r.investReal==null?"var(--hint)":statusColor(r.investReal,r.investimento,false);
+            const investColor=r.investReal==null?"var(--hint)":statusColor(r.investReal,r.investimento,true);
             const leadsColor=r.leadsReal==null?"var(--hint)":statusColor(r.leadsReal,r.leads,true);
             return `<tr style="background:${r.isToday?"rgba(59,130,246,.08)":"transparent"}">
               <td class="mono">${diaSemana(r.date)}, ${fDate(r.date)}${r.isToday?` <span title="hoje">👈</span>`:""}</td>
@@ -2137,10 +2170,10 @@ function renderPlanoReal(){
       </div>
     </div>
 
-    ${stageTable("Aquecimento",PLANO_AQUECIMENTO)}
-    ${stageTable("Lembrete",PLANO_LEMBRETE)}
-    ${stageTable("Aulas",PLANO_AULAS)}
-    ${stageTable("Carrinho",PLANO_CARRINHO)}
+    ${stageTable("Aquecimento","Aquecimento",PLANO_AQUECIMENTO)}
+    ${stageTable("Lembrete","Lembrete",PLANO_LEMBRETE)}
+    ${stageTable("Aulas","Aulas",PLANO_AULAS)}
+    ${stageTable("Carrinho","Carrinho",PLANO_CARRINHO)}
 
     <div class="foot">OFRR · Captação · dados locais (CSV embutido) + planejamento manual</div>`;
 }
