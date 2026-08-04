@@ -389,6 +389,8 @@ const S = {
   carrinhoOrigemSearch:"", carrinhoCanalSearch:"",
   carrinhoOSort:{col:"fichas",dir:"desc"}, carrinhoCSort:{col:"fichas",dir:"desc"},
   carrinhoAdSearch:"", carrinhoAdSort:{col:"spend",dir:"desc"},
+  carrinhoSelectedCamps:new Set(), carrinhoCampSearch:"", carrinhoCampSort:{col:"spend",dir:"desc"},
+  carrinhoSelectedAds:new Set(),
   carrinhoVendaAttrib:[],   // vendas de TRÁFEGO casadas com anúncio/campanha (herdado da ficha): {date,adName,campName}
   carrinhoVendaOrigem:[],   // TODAS as vendas casadas (tráfego+orgânico) com origem/canal: {date,tipo,origem,canal,comPreco}
   carrinhoVendasPorDia:{},  // date → count (usa a própria "Data Correta" da venda, sem ajuste de fuso)
@@ -2924,8 +2926,49 @@ function renderCarrinhoVendas(){
 }
 
 // ── Carrinho: Campanhas/Anúncios ────────────────────────────────────────────
-function carrinhoAdRows(start,end){
+// Agregação por CAMPANHA (Carrinho) — mesma base de anúncios, só que somada
+// por campName. Fichas/vendas são casadas por campName (cada ficha/venda de
+// tráfego já carrega o campName do anúncio que a originou).
+function getCarrinhoCampRows(start,end){
   const rows=carrinhoMetaRowsInRange(start,end);
+  const byCamp={};
+  for(const r of rows){
+    const key=r.campName||"(sem campanha)";
+    if(!byCamp[key])byCamp[key]={campName:key,spend:0,clicks:0,impressions:0};
+    const c=byCamp[key];
+    c.spend+=r.spend;c.clicks+=r.clicks;c.impressions+=r.impressions;
+  }
+  const fichasByCamp={},fichasComPrecoByCamp={};
+  for(const f of S.carrinhoFichaAttrib){
+    if(f.date<start||f.date>end)continue;
+    const cn=f.campName||"(sem campanha)";
+    fichasByCamp[cn]=(fichasByCamp[cn]||0)+1;
+    if(f.comPreco)fichasComPrecoByCamp[cn]=(fichasComPrecoByCamp[cn]||0)+1;
+  }
+  const vendasByCamp={};
+  for(const v of S.carrinhoVendaAttrib){
+    if(v.date<start||v.date>end)continue;
+    const cn=v.campName||"(sem campanha)";
+    vendasByCamp[cn]=(vendasByCamp[cn]||0)+1;
+  }
+  return Object.values(byCamp).map(c=>{
+    const fichas=fichasByCamp[c.campName]||0, fichasComPreco=fichasComPrecoByCamp[c.campName]||0;
+    const vendas=vendasByCamp[c.campName]||0;
+    return{...c,
+      cpc:c.clicks>0?c.spend/c.clicks:null,
+      ctr:c.impressions>0?(c.clicks/c.impressions)*100:0,
+      fichas,fichasComPreco,vendas,
+      convFichaVenda:fichas>0?(vendas/fichas)*100:0,
+      custoFichaComPreco:fichasComPreco>0?c.spend/fichasComPreco:null};
+  });
+}
+// selectedCamps (Set opcional) → mesmo esquema de cross-filtering da Captação:
+// se houver campanhas selecionadas, os anúncios são restritos a elas antes de
+// agregar por adName.
+function carrinhoAdRows(start,end,selectedCamps){
+  const hasSel=selectedCamps&&selectedCamps.size>0;
+  let rows=carrinhoMetaRowsInRange(start,end);
+  if(hasSel)rows=rows.filter(r=>selectedCamps.has(r.campName||"(sem campanha)"));
   const byAd={};
   for(const r of rows){
     const key=r.adName||"(sem nome)";
@@ -2950,21 +2993,84 @@ function carrinhoAdRows(start,end){
     const vendas=vendasByAd[a.adName]||0;
     return{...a,
       cpc:a.clicks>0?a.spend/a.clicks:null,
+      ctr:a.impressions>0?(a.clicks/a.impressions)*100:0,
       fichas,fichasComPreco,vendas,
       convFichaVenda:fichas>0?(vendas/fichas)*100:0,
       custoFichaComPreco:fichasComPreco>0?a.spend/fichasComPreco:null};
   });
 }
-function setCarrinhoAdSearch(v){S.carrinhoAdSearch=v;render();}
+function setCarrinhoAdSearch(v){S.carrinhoAdSearch=v;renderCarrinhoAnuncios();}
 function sortCarrinhoAds(col){
   const s=S.carrinhoAdSort;if(s.col===col)s.dir=s.dir==="asc"?"desc":"asc";else{s.col=col;s.dir="desc";}
-  render();
+  renderCarrinhoAnuncios();
+}
+function toggleCarrinhoCamp(name){
+  if(S.carrinhoSelectedCamps.has(name))S.carrinhoSelectedCamps.delete(name);else S.carrinhoSelectedCamps.add(name);
+  renderCarrinhoAnuncios();
+}
+function clearCarrinhoCamps(){S.carrinhoSelectedCamps.clear();renderCarrinhoAnuncios();}
+function setCarrinhoCampSearch(v){S.carrinhoCampSearch=v;renderCarrinhoAnuncios();}
+function sortCarrinhoCampanhas(col){
+  const s=S.carrinhoCampSort;if(s.col===col)s.dir=s.dir==="asc"?"desc":"asc";else{s.col=col;s.dir="desc";}
+  renderCarrinhoAnuncios();
+}
+function toggleCarrinhoAd(name){
+  if(S.carrinhoSelectedAds.has(name))S.carrinhoSelectedAds.delete(name);else S.carrinhoSelectedAds.add(name);
+  renderCarrinhoAnuncios();
+}
+function clearCarrinhoAds(){S.carrinhoSelectedAds.clear();renderCarrinhoAnuncios();}
+// Texto copiável do resumo do anúncio — mesmo espírito do adResumoBlock() da
+// Captação, mas com os campos que existem no Carrinho (fichas com preço,
+// custo/ficha com preço vs meta, vendas/conversão) em vez de faixa/quiz.
+function carrinhoAdResumoBlock(a){
+  const lines=[];
+  lines.push(`Nome do ad ⤵️`);
+  lines.push(a.adName);
+  lines.push(``);
+  if(a.igUrl)lines.push(a.igUrl);
+  lines.push(`Investimento:\t${fBRL(a.spend)}`);
+  lines.push(`Cliques:\t${a.clicks.toLocaleString("pt-BR")}`);
+  lines.push(`CPC:\t${a.cpc!=null?fBRL(a.cpc):"—"}`);
+  lines.push(``);
+  lines.push(`Fichas:\t${a.fichas}`);
+  lines.push(`Fichas com preço:\t${a.fichasComPreco}`);
+  lines.push(`Custo/ficha com preço:\t${a.custoFichaComPreco!=null?fBRL(a.custoFichaComPreco):"—"} (meta ${fBRL(META_CARRINHO_CUSTO_FICHA_COM_PRECO)})`);
+  lines.push(``);
+  lines.push(`Vendas:\t${a.vendas}`);
+  lines.push(`Conversão ficha→venda:\t${fPct(a.convFichaVenda)}`);
+  lines.push(`__________________________`);
+  return lines.join("\n");
+}
+function copyCarrinhoAdResumo(){
+  const el=document.getElementById("page-carrinho-anuncios");
+  const text=el?._carrinhoAdResumoText||"";if(!text)return;
+  navigator.clipboard.writeText(text).then(()=>{
+    document.querySelectorAll(".btn-copy-carrinho-ads").forEach(b=>{
+      const orig=b.innerHTML;b.innerHTML="✓ Copiado!";b.style.color="#4ade80";
+      setTimeout(()=>{b.innerHTML=orig;b.style.color="";},1800);
+    });
+  }).catch(()=>alert("Não foi possível copiar. Selecione o texto manualmente."));
 }
 function renderCarrinhoAnuncios(){
   const el=document.getElementById("page-carrinho-anuncios");if(!el)return;
   const per=getCurrentPeriod();
   const start=S.startDate,end=S.endDate;
-  const adsAll=carrinhoAdRows(start,end);
+  const escName=s=>String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'");
+
+  const campRowsAll=getCarrinhoCampRows(start,end);
+  const _cq=S.carrinhoCampSearch.trim().toLowerCase();
+  const campRows=_cq?campRowsAll.filter(c=>c.campName.toLowerCase().includes(_cq)):campRowsAll;
+  const{col:cCol,dir:cDir}=S.carrinhoCampSort;
+  const sortedCamps=[...campRows].sort((a,b)=>{
+    const av=a[cCol],bv=b[cCol];
+    if(av==null&&bv==null)return 0;
+    if(av==null)return 1;
+    if(bv==null)return -1;
+    if(typeof av==="string")return cDir==="asc"?av.localeCompare(bv):bv.localeCompare(av);
+    return cDir==="asc"?av-bv:bv-av;
+  });
+
+  const adsAll=carrinhoAdRows(start,end,S.carrinhoSelectedCamps);
   const q=S.carrinhoAdSearch.trim().toLowerCase();
   const adsF=q?adsAll.filter(a=>a.adName.toLowerCase().includes(q)):adsAll;
   const{col,dir}=S.carrinhoAdSort;
@@ -2976,10 +3082,20 @@ function renderCarrinhoAnuncios(){
     if(typeof av==="string")return dir==="asc"?av.localeCompare(bv):bv.localeCompare(av);
     return dir==="asc"?av-bv:bv-av;
   });
-  const tot=adsAll.reduce((a,x)=>({spend:a.spend+x.spend,clicks:a.clicks+x.clicks,fichas:a.fichas+x.fichas,fichasComPreco:a.fichasComPreco+x.fichasComPreco,vendas:a.vendas+x.vendas}),{spend:0,clicks:0,fichas:0,fichasComPreco:0,vendas:0});
+
+  const tot=campRowsAll.reduce((a,x)=>({spend:a.spend+x.spend,clicks:a.clicks+x.clicks,fichas:a.fichas+x.fichas,fichasComPreco:a.fichasComPreco+x.fichasComPreco,vendas:a.vendas+x.vendas}),{spend:0,clicks:0,fichas:0,fichasComPreco:0,vendas:0});
   const totCustoFichaComPreco=tot.fichasComPreco>0?tot.spend/tot.fichasComPreco:null;
   const totConvFichaVenda=tot.fichas>0?(tot.vendas/tot.fichas)*100:0;
 
+  const selAds=sortedAds.filter(a=>S.carrinhoSelectedAds.has(a.adName));
+  const adResumoText=selAds.length>0?selAds.map(a=>carrinhoAdResumoBlock(a)).join("\n"):"";
+  el._carrinhoAdResumoText=adResumoText;
+
+  function thC(colKey,lbl){
+    const active=cCol===colKey;
+    const arrow=active?(cDir==="asc"?" ↑":" ↓"):" ↕";
+    return `<th onclick="sortCarrinhoCampanhas('${colKey}')" style="text-align:right;cursor:pointer">${lbl}<span style="color:${active?"#60a5fa":"var(--hint)"};margin-left:3px">${arrow}</span></th>`;
+  }
   function th(colKey,lbl){
     const active=col===colKey;
     const arrow=active?(dir==="asc"?" ↑":" ↓"):" ↕";
@@ -2990,7 +3106,7 @@ function renderCarrinhoAnuncios(){
     <div class="hdr" style="margin-bottom:6px">
       <div>
         <div class="hdr-title">Carrinho — Campanhas/Anúncios</div>
-        <div class="hdr-sub">${per.s&&per.e?`${fDateBR(per.s)} → ${fDateBR(per.e)}`:""} · ${sortedAds.length} anúncio(s)</div>
+        <div class="hdr-sub">${per.s&&per.e?`${fDateBR(per.s)} → ${fDateBR(per.e)}`:""} · ${sortedCamps.length} campanha(s) · ${sortedAds.length} anúncio(s)${S.carrinhoSelectedCamps.size>0?` · filtrado por ${S.carrinhoSelectedCamps.size} campanha(s)`:""}</div>
       </div>
     </div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
@@ -3001,6 +3117,57 @@ function renderCarrinhoAnuncios(){
       ${kpiCard("Custo/ficha com preço",totCustoFichaComPreco!=null?fBRL(totCustoFichaComPreco):"—",`Meta: ${fBRL(META_CARRINHO_CUSTO_FICHA_COM_PRECO)}`,totCustoFichaComPreco!=null?statusColor(totCustoFichaComPreco,META_CARRINHO_CUSTO_FICHA_COM_PRECO,false):"var(--text-strong)",false,totCustoFichaComPreco,META_CARRINHO_CUSTO_FICHA_COM_PRECO,false)}
       ${kpiCard("Vendas (conv. ficha→venda)",tot.vendas.toLocaleString("pt-BR"),fPct(totConvFichaVenda),"var(--text-strong)")}
     </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div class="section-lbl" style="margin-bottom:0">Campanhas</div>
+      ${S.carrinhoSelectedCamps.size>0?`<button onclick="clearCarrinhoCamps()" style="font-size:10px;padding:3px 9px;border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.08);color:#f87171;border-radius:5px;cursor:pointer;font-family:'DM Sans',sans-serif">✕ Limpar seleção (${S.carrinhoSelectedCamps.size})</button>`:""}
+      <span style="font-size:10px;color:var(--hint)">Clique para filtrar os anúncios por campanha</span>
+    </div>
+    <div style="position:relative;margin-bottom:10px">
+      <input oninput="setCarrinhoCampSearch(this.value)" value="${S.carrinhoCampSearch}" placeholder="Buscar campanha…" style="width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:12px;font-family:'DM Sans',sans-serif;outline:none;box-sizing:border-box"/>
+    </div>
+    <div class="cc" style="padding:0;overflow:hidden;margin-bottom:22px">
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr>
+          <th style="width:36px"></th>
+          <th onclick="sortCarrinhoCampanhas('campName')" style="cursor:pointer">Campanha</th>
+          ${thC("spend","Investido")}
+          ${thC("clicks","Cliques")}
+          ${thC("cpc","CPC")}
+          ${thC("fichas","Fichas")}
+          ${thC("fichasComPreco","Fichas c/ preço")}
+          ${thC("custoFichaComPreco","Custo/ficha c/ preço")}
+          ${thC("vendas","Vendas")}
+          ${thC("convFichaVenda","Conversão")}
+        </tr></thead>
+        <tbody>
+          ${sortedCamps.length===0?`<tr><td colspan="10" style="text-align:center;color:var(--hint);padding:20px">Sem campanhas de Carrinho no período</td></tr>`:
+          sortedCamps.map(c=>{
+            const sel=S.carrinhoSelectedCamps.has(c.campName);
+            return `<tr onclick="toggleCarrinhoCamp('${escName(c.campName)}')" style="cursor:pointer;background:${sel?"rgba(16,185,129,.1)":"transparent"}">
+              <td style="text-align:center">${chkBox(sel)}</td>
+              <td style="color:${sel?"#10b981":"var(--text)"};font-weight:${sel?600:400}">${c.campName}</td>
+              <td class="mono" style="text-align:right">${fBRL(c.spend)}</td>
+              <td class="mono" style="text-align:right">${c.clicks.toLocaleString("pt-BR")}</td>
+              <td class="mono" style="text-align:right">${c.cpc!=null?fBRL(c.cpc):"—"}</td>
+              <td class="mono" style="text-align:right">${c.fichas.toLocaleString("pt-BR")}</td>
+              <td class="mono" style="text-align:right">${c.fichasComPreco.toLocaleString("pt-BR")}</td>
+              <td style="text-align:right;color:${c.custoFichaComPreco!=null?statusColor(c.custoFichaComPreco,META_CARRINHO_CUSTO_FICHA_COM_PRECO,false):"var(--muted)"}">${c.custoFichaComPreco!=null?fBRL(c.custoFichaComPreco):"—"}</td>
+              <td class="mono" style="text-align:right">${c.vendas.toLocaleString("pt-BR")}</td>
+              <td class="mono" style="text-align:right">${fPct(c.convFichaVenda)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div class="section-lbl" style="margin-bottom:0">Anúncios${S.carrinhoSelectedCamps.size>0?` — dentro de: ${[...S.carrinhoSelectedCamps].join(", ")}`:" — consolidado (todas as campanhas)"}</div>
+      ${S.carrinhoSelectedAds.size>0?`<button onclick="clearCarrinhoAds()" style="font-size:10px;padding:3px 9px;border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.08);color:#f87171;border-radius:5px;cursor:pointer;font-family:'DM Sans',sans-serif">✕ Limpar seleção (${S.carrinhoSelectedAds.size})</button>`:""}
+      <span style="font-size:10px;color:var(--hint)">Clique para selecionar e gerar o resumo</span>
+    </div>
     <div style="position:relative;margin-bottom:10px">
       <input oninput="setCarrinhoAdSearch(this.value)" value="${S.carrinhoAdSearch}" placeholder="Buscar anúncio…" style="width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:12px;font-family:'DM Sans',sans-serif;outline:none;box-sizing:border-box"/>
     </div>
@@ -3008,6 +3175,7 @@ function renderCarrinhoAnuncios(){
       <div style="overflow-x:auto">
       <table>
         <thead><tr>
+          <th style="width:36px"></th>
           <th onclick="sortCarrinhoAds('adName')" style="cursor:pointer">Anúncio</th>
           ${th("spend","Investido")}
           ${th("clicks","Cliques")}
@@ -3020,23 +3188,38 @@ function renderCarrinhoAnuncios(){
           <th>Ver</th>
         </tr></thead>
         <tbody>
-          ${sortedAds.length===0?`<tr><td colspan="10" style="text-align:center;color:var(--hint);padding:20px">Sem anúncios de Carrinho no período</td></tr>`:
-          sortedAds.map(a=>`<tr>
-            <td>${a.adName}</td>
-            <td class="mono" style="text-align:right">${fBRL(a.spend)}</td>
-            <td class="mono" style="text-align:right">${a.clicks.toLocaleString("pt-BR")}</td>
-            <td class="mono" style="text-align:right">${a.cpc!=null?fBRL(a.cpc):"—"}</td>
-            <td class="mono" style="text-align:right">${a.fichas.toLocaleString("pt-BR")}</td>
-            <td class="mono" style="text-align:right">${a.fichasComPreco.toLocaleString("pt-BR")}</td>
-            <td class="mono" style="text-align:right">${a.custoFichaComPreco!=null?fBRL(a.custoFichaComPreco):"—"}</td>
-            <td class="mono" style="text-align:right">${a.vendas.toLocaleString("pt-BR")}</td>
-            <td class="mono" style="text-align:right">${fPct(a.convFichaVenda)}</td>
-            <td>${a.igUrl?`<a href="${a.igUrl}" target="_blank" rel="noopener" style="color:#60a5fa">Ver ↗</a>`:"—"}</td>
-          </tr>`).join("")}
+          ${sortedAds.length===0?`<tr><td colspan="11" style="text-align:center;color:var(--hint);padding:20px">Sem anúncios de Carrinho no período</td></tr>`:
+          sortedAds.map(a=>{
+            const sel=S.carrinhoSelectedAds.has(a.adName);
+            return `<tr onclick="toggleCarrinhoAd('${escName(a.adName)}')" style="cursor:pointer;background:${sel?"rgba(16,185,129,.1)":"transparent"}">
+              <td style="text-align:center">${chkBox(sel)}</td>
+              <td style="color:${sel?"#10b981":"var(--text)"};font-weight:${sel?600:400};max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${a.adName}">${a.adName}</td>
+              <td class="mono" style="text-align:right">${fBRL(a.spend)}</td>
+              <td class="mono" style="text-align:right">${a.clicks.toLocaleString("pt-BR")}</td>
+              <td class="mono" style="text-align:right">${a.cpc!=null?fBRL(a.cpc):"—"}</td>
+              <td class="mono" style="text-align:right">${a.fichas.toLocaleString("pt-BR")}</td>
+              <td class="mono" style="text-align:right">${a.fichasComPreco.toLocaleString("pt-BR")}</td>
+              <td style="text-align:right;color:${a.custoFichaComPreco!=null?statusColor(a.custoFichaComPreco,META_CARRINHO_CUSTO_FICHA_COM_PRECO,false):"var(--muted)"}">${a.custoFichaComPreco!=null?fBRL(a.custoFichaComPreco):"—"}</td>
+              <td class="mono" style="text-align:right">${a.vendas.toLocaleString("pt-BR")}</td>
+              <td class="mono" style="text-align:right">${fPct(a.convFichaVenda)}</td>
+              <td style="text-align:center" onclick="event.stopPropagation()">${a.igUrl?`<a href="${a.igUrl}" target="_blank" rel="noopener" style="color:#93c5fd;text-decoration:none;font-size:11px">Ver ↗</a>`:"—"}</td>
+            </tr>`;
+          }).join("")}
         </tbody>
       </table>
       </div>
     </div>
+
+    ${selAds.length>0?`
+    <div style="margin-top:22px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div class="section-lbl" style="margin-bottom:0">Resumo de Anúncios (${selAds.length})</div>
+        <button class="btn-copy-carrinho-ads" onclick="copyCarrinhoAdResumo()" style="padding:6px 16px;background:rgba(59,130,246,.15);border:1px solid rgba(96,165,250,.35);color:#93c5fd;border-radius:8px;cursor:pointer;font-size:11px;font-weight:600;font-family:'DM Sans',sans-serif">📋 Copiar resumo</button>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px">
+        <pre style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text);white-space:pre-wrap;line-height:1.9;margin:0;user-select:all">${adResumoText.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</pre>
+      </div>
+    </div>`:""}
     <div class="foot">OFRR · Carrinho · Campanhas/Anúncios</div>`;
 }
 
