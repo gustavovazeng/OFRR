@@ -242,16 +242,20 @@ const METAS_RESUMO = {
 // ── Planejamento diário (passado manualmente pela planilha do lançamento) ──
 // Cada linha: investimento e leads planejados para aquele dia. "leads" aqui é
 // a mesma coisa que "Resultado planejado" na planilha (quantidade de leads).
+// Leads planejados recalculados a partir do investimento diário ÷ meta de
+// CPL (META_CPL = R$5,50) — é a mesma meta consolidada do lançamento, então
+// o número de leads/dia acompanha a curva de investimento. Soma bate exato
+// em 14.000 (77.000 ÷ 5,50).
 const PLANO_DIARIO = [
-  {date:"2026-08-02", investimento:4620,  leads:840},
-  {date:"2026-08-03", investimento:5544,  leads:1008},
-  {date:"2026-08-04", investimento:6653,  leads:1210},
-  {date:"2026-08-05", investimento:7983,  leads:1452},
-  {date:"2026-08-06", investimento:8782,  leads:1597},
-  {date:"2026-08-07", investimento:8782,  leads:1597},
-  {date:"2026-08-08", investimento:8782,  leads:1597},
-  {date:"2026-08-09", investimento:8782,  leads:1597},
-  {date:"2026-08-10", investimento:6073,  leads:1104},
+  {date:"2026-08-02", investimento:5929,  leads:1078},
+  {date:"2026-08-03", investimento:4851,  leads:882},
+  {date:"2026-08-04", investimento:5775,  leads:1050},
+  {date:"2026-08-05", investimento:6930,  leads:1260},
+  {date:"2026-08-06", investimento:8316,  leads:1512},
+  {date:"2026-08-07", investimento:9979,  leads:1814},
+  {date:"2026-08-08", investimento:11975, leads:2177},
+  {date:"2026-08-09", investimento:14370, leads:2613},
+  {date:"2026-08-10", investimento:8875,  leads:1614},
 ];
 // Soma do plano (Captação) até hoje — usado na aba Principal pros cartões
 // "planejado até hoje" e "% atingimento da meta".
@@ -277,21 +281,21 @@ const PLANO_LEMBRETE = [
   {date:"2026-08-06", investimento:0},
   {date:"2026-08-07", investimento:0},
   {date:"2026-08-08", investimento:0},
-  {date:"2026-08-09", investimento:388},
+  {date:"2026-08-09", investimento:453},
 ];
 const PLANO_AULAS = [
-  {date:"2026-08-10", investimento:1584},
-  {date:"2026-08-11", investimento:1491},
-  {date:"2026-08-12", investimento:1584},
+  {date:"2026-08-10", investimento:1848},
+  {date:"2026-08-11", investimento:1739},
+  {date:"2026-08-12", investimento:1848},
 ];
 const PLANO_CARRINHO = [
-  {date:"2026-08-13", investimento:2046},
-  {date:"2026-08-14", investimento:1518},
-  {date:"2026-08-15", investimento:990},
-  {date:"2026-08-16", investimento:594},
-  {date:"2026-08-17", investimento:594},
-  {date:"2026-08-18", investimento:429},
-  {date:"2026-08-19", investimento:429},
+  {date:"2026-08-13", investimento:2387},
+  {date:"2026-08-14", investimento:1771},
+  {date:"2026-08-15", investimento:1155},
+  {date:"2026-08-16", investimento:693},
+  {date:"2026-08-17", investimento:693},
+  {date:"2026-08-18", investimento:501},
+  {date:"2026-08-19", investimento:501},
   {date:"2026-08-20", investimento:0},
 ];
 function diaSemana(iso){
