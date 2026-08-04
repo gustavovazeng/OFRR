@@ -214,6 +214,9 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
 const SHEET_ID = "1fnYWDE3acNuIIgdq3wBmtD0-AAptf5EiB0ibyUfbXHE";
 const SHEET_META_NAME = "Base Meta - captação";
 const SHEET_LEADS_NAME = "Base leads";
+const SHEET_AQUECIMENTO_NAME = "Base Meta - aquecimento";
+const SHEET_LEMBRETE_NAME = "Base Meta - lembrete";
+const SHEET_AULAS_NAME = "Base Meta - Aulas";
 function sheetCsvUrl(sheetName){
   return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
 }
@@ -237,6 +240,33 @@ const METAS_RESUMO = {
   quiz:     {val:80.00, higher:true},  // Tx de resposta da pesquisa — maior é melhor
   txConvPg: {val:40.00, higher:true},  // Tx conv. Pg cadastro (aproximado: leads/cliques) — maior é melhor
   connectRate:{val:85.00, higher:true}, // ainda não computável (falta dado na Base Meta atual)
+};
+
+// ── Metas das etapas Aquecimento/Lembrete/Aulas (benchmarks de lançamentos
+// anteriores) — valores fixos passados manualmente. Os modelos originais
+// comparavam "meta de ontem"/"meta às 12h" (uma curva dia-a-dia do
+// lançamento de benchmark), mas não temos o histórico diário completo desse
+// benchmark aqui — por isso cada meta abaixo é um alvo único e fixo, não uma
+// curva. Ajustar se/quando o histórico diário do benchmark existir.
+const AQUECIMENTO_METAS = {
+  cpc:       {val:3.34, higher:false}, // benchmark ofrr_jul25
+  frequencia:{val:12.12,higher:true},
+  tx75:      {val:3.8,  higher:true},
+  cptx75:    {val:1.81, higher:false},
+};
+const LEMBRETE_METAS = {
+  cpc:        {val:1.14, higher:false}, // benchmark ofrr_out25
+  frequencia: {val:11.76,higher:true},
+  likesJul25: {val:726,  higher:true},
+  likesOut25: {val:756,  higher:true},
+};
+// Só a Aula 01 veio com metas de benchmark; Aula 02/03 aguardam metas
+// específicas (mostradas sem farol/comparação até então).
+const AULA01_METAS = {
+  cpc:        {val:2.26, higher:false}, // benchmark ofrr_out25
+  frequencia: {val:5.33, higher:true},
+  likesJul25: {val:2325, higher:true},
+  likesOut25: {val:1325, higher:true},
 };
 
 // ── Planejamento diário (passado manualmente pela planilha do lançamento) ──
@@ -321,6 +351,11 @@ const S = {
   adIdMap:{},            // adId → {adName,campName,campId,adsetName,igUrl}
   leadsRows:[],          // leads reais: {date,ms,quizOk,faixa,name,email,phone,utmSource,adName,campName,...demografia}
   leadsByDate:{},        // date → count (leads reais/dia)
+  aquecimentoRows:[],    // linhas da Base Meta - aquecimento: {date,campName,adName,igUrl,spend,clicks,impressions,video75}
+  lembreteRows:[],       // idem, Base Meta - lembrete
+  aulasRows:[],          // idem, Base Meta - Aulas (uma ou mais campanhas por aula, ver aulaNumberFromCampaign)
+  manualAlcance:{aquecimento:null,lembrete:null,aula01:null,aula02:null,aula03:null}, // Alcance manual (API não fornece) — usado pra calcular Frequência
+  manualLikes:{lembreteJul25:null,lembreteOut25:null,aula01Jul25:null,aula01Out25:null,aula02Jul25:null,aula02Out25:null,aula03Jul25:null,aula03Out25:null}, // Likes manuais (sem fonte de dado própria)
   startDate:"", endDate:"", activeQuick:"30d",
   principalChannel:"total", // "total" | "trafego" | "organico" — filtro exclusivo da aba Principal
   principalTemp:"todos",    // "todos" | "quente" | "morno" | "frio" — filtro exclusivo da aba Principal
@@ -435,6 +470,26 @@ function parseRows(rows){
   const h=rows[0];
   return rows.slice(1).map(r=>Object.fromEntries(h.map((k,i)=>[k,(r[i]||"").trim()])));
 }
+// Parser genérico pras 3 bases de etapa (Aquecimento/Lembrete/Aulas) — todas
+// têm o mesmo formato básico (Date, Campaign Name, Spend, Action Link
+// Clicks, Impressions, Video 75%...), com pequenas variações de colunas que
+// não usamos aqui (Cost per Inline Link Click é recalculado por nós mesmos,
+// pra ficar consistente com o resto do dashboard).
+function parseStageRows(rowsRaw){
+  const out=[];
+  for(const r of rowsRaw){
+    const d=toISO(r["Date"]);if(!d)continue;
+    const spend=parseBRL(r["Spend (Cost, Amount Spent)"]);
+    const clicks=parseInt(r["Action Link Clicks"]||0)||0;
+    const impressions=parseInt(r["Impressions"]||0)||0;
+    const video75=parseInt(r["Video 75 Percent Watched Actions"]||0)||0;
+    const campName=(r["Campaign Name"]||"").trim();
+    const adName=(r["Ad Name"]||"").trim();
+    const igUrl=(r["Instagram Permalink URL"]||"").trim();
+    out.push({date:d,campName,adName,igUrl,spend,clicks,impressions,video75});
+  }
+  return out;
+}
 
 // ── Attribution helpers (UTM → anúncio/campanha do Meta Ads) ───────────────
 // Padrão de UTM do Meta Ads exportado neste funil:
@@ -484,6 +539,39 @@ function stageSpendForDate(stage,date){
 // "Resumo por etapa" do Planejado/Realizado.
 function totalSpendForStage(stage){
   return S.metaRows.filter(r=>campaignStage(r.campName)===stage).reduce((a,r)=>a+r.spend,0);
+}
+
+// Mesma lógica do metaEmoji() usado no Resumo diário (🟢/🟡/🔴/⚪), só que
+// acessível globalmente pras novas abas de etapa (Aquecimento/Lembrete/Aulas).
+function metaEmojiGlobal(val,meta,higherIsBetter){
+  if(val==null) return "⚪";
+  if(!val) return "🔴";
+  const c=statusColor(val,meta,higherIsBetter);
+  if(c==="#34d399")return "🟢";
+  if(c==="#fbbf24")return "🟡";
+  return "🔴";
+}
+// Número da aula (1/2/3) a partir do nome da campanha — ex.: contém "aula01"
+// ou "aula 1". null se não identificar nenhuma aula no nome.
+function aulaNumberFromCampaign(campName){
+  const c=String(campName||"").toLowerCase();
+  const m=c.match(/aula\s*0?(\d)/);
+  return m?m[1]:null;
+}
+function sumStageRows(rows){
+  return rows.reduce((a,r)=>({spend:a.spend+r.spend,clicks:a.clicks+r.clicks,impressions:a.impressions+r.impressions,video75:a.video75+r.video75}),
+    {spend:0,clicks:0,impressions:0,video75:0});
+}
+// Métricas agregadas de uma etapa (Aquecimento/Lembrete/Aulas): CPC vem de
+// spend/clicks (recalculado, não da coluna pronta do CSV, pra consistência
+// com o resto do dashboard). Tx75%/CPtx75% usam Impressões como base (não
+// temos "Video Plays" nessas bases) — ajustar se um dia existir esse dado.
+function stageMetrics(rows){
+  const t=sumStageRows(rows);
+  const cpc=t.clicks>0?t.spend/t.clicks:null;
+  const tx75=t.impressions>0?(t.video75/t.impressions)*100:null;
+  const cptx75=t.video75>0?t.spend/t.video75:null;
+  return{...t,cpc,tx75,cptx75};
 }
 
 // ── Load data ─────────────────────────────────────────────────────────────
@@ -599,6 +687,23 @@ async function loadData(){
     S.error="Erro ao carregar dados do Google Sheets: "+e.message;
     console.error(e);
   }
+
+  // Etapas Aquecimento/Lembrete/Aulas — buscadas à parte, num try/catch
+  // próprio, pra uma aba nova ainda não existir/falhar não derrubar o resto
+  // do dashboard (Captação, que já está rodando, continua funcionando).
+  try{
+    const [aquecimentoCsv, lembreteCsv, aulasCsv] = await Promise.all([
+      fetchSheetCSV(SHEET_AQUECIMENTO_NAME),
+      fetchSheetCSV(SHEET_LEMBRETE_NAME),
+      fetchSheetCSV(SHEET_AULAS_NAME),
+    ]);
+    S.aquecimentoRows = parseStageRows(parseRows(parseCSVText(aquecimentoCsv)));
+    S.lembreteRows = parseStageRows(parseRows(parseCSVText(lembreteCsv)));
+    S.aulasRows = parseStageRows(parseRows(parseCSVText(aulasCsv)));
+  }catch(e){
+    console.error("Erro ao carregar dados das etapas (Aquecimento/Lembrete/Aulas):",e);
+  }
+
   S.loading=false;
   render();
 }
@@ -2005,6 +2110,205 @@ function renderStagePage(pageId,label,planArr){
     <div class="foot">OFRR · ${label}</div>`;
 }
 
+// ── Helpers compartilhados dos resumos de etapa (Aquecimento/Lembrete/Aulas) ─
+function setManualAlcance(key,v){
+  const n=parseInt(String(v).replace(/\D/g,""));
+  S.manualAlcance[key]=(isNaN(n)||n<=0)?null:n;
+  render();
+}
+function setManualLikes(key,v){
+  const n=parseInt(String(v).replace(/\D/g,""));
+  S.manualLikes[key]=(isNaN(n)||n<=0)?null:n;
+  render();
+}
+// Linha label/valor/meta+emoji — mesmo padrão visual do Resumo diário.
+function stageRow(lbl,val,metaStr,emoji){
+  return `<div style="display:grid;grid-template-columns:220px 1fr auto;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:center">
+    <span style="color:var(--muted);font-size:12px">${lbl}</span>
+    <span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text-strong)">${val}</span>
+    <span style="font-size:14px;min-width:90px;text-align:right">${emoji||""}<span style="font-size:10px;color:var(--hint);margin-left:4px">${metaStr||""}</span></span>
+  </div>`;
+}
+// Linha de input manual (Alcance ou Likes) — mesmo padrão do campo de
+// investimento manual do Resumo diário, com id próprio pra restaurar o foco
+// depois do re-render (senão o cursor pula pro início a cada tecla digitada).
+function stageManualRow(inputId,lbl,value,setterCall,metaStr,emoji){
+  return `<div style="display:grid;grid-template-columns:220px 1fr auto;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:center">
+    <span style="color:var(--muted);font-size:12px">${lbl}</span>
+    <input id="${inputId}" value="${value||''}" placeholder="inserir manualmente" inputmode="numeric"
+      oninput="${setterCall}"
+      onkeydown="if(event.key==='Enter')this.blur()"
+      style="font-family:'JetBrains Mono',monospace;font-size:13px;color:${value?'#fbbf24':'var(--text-strong)'};background:transparent;border:none;border-bottom:1px solid ${value?'rgba(251,191,36,.4)':'rgba(255,255,255,.15)'};outline:none;padding:2px 0;width:100%"/>
+    <span style="font-size:14px;min-width:90px;text-align:right">${emoji||""}<span style="font-size:10px;color:var(--hint);margin-left:4px">${metaStr||""}</span></span>
+  </div>`;
+}
+function restoreStageFocus(fid){
+  if(!fid)return;
+  requestAnimationFrame(()=>{
+    const s=document.getElementById(fid);
+    if(s){s.focus();const l=s.value.length;s.setSelectionRange(l,l);}
+  });
+}
+
+// ── Render: Resumo Aquecimento ──────────────────────────────────────────────
+// Total e Facebook mostram os mesmos números: a Base Meta desta etapa só tem
+// uma fonte de tráfego (Meta Ads), sem quebra por plataforma como a de
+// Captação — por isso não existe um "Total" diferente de "Facebook" aqui.
+function renderAquecimento(){
+  const el=document.getElementById("page-aquecimento");if(!el)return;
+  const _fid=document.activeElement?.id;
+  const rows=S.aquecimentoRows;
+  const m=stageMetrics(rows);
+  const alcance=S.manualAlcance.aquecimento;
+  const freq=alcance>0?m.impressions/alcance:null;
+  const dates=rows.map(r=>r.date).sort();
+  const first=dates[0]||null;
+
+  function block(title,rowsHtml){
+    return `<div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px;max-width:640px">
+      <div style="font-size:13px;font-weight:700;color:var(--text-strong);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)">${title}</div>
+      ${rowsHtml}
+    </div>`;
+  }
+
+  el.innerHTML=`
+    <div class="hdr" style="margin-bottom:6px">
+      <div>
+        <div class="hdr-title">Resumo Aquecimento</div>
+        <div class="hdr-sub">Benchmark: ofrr_jul25 · ${first?fDateBR(first):"—"} → ${fDateBR(todayISO())}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px">${statusLegend()}</div>
+    </div>
+    ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
+    ${block("Total",
+      stageRow("Investimento total",fBRL(m.spend),"","")+
+      stageRow("Cliques",m.clicks.toLocaleString("pt-BR"),"","")+
+      stageRow("CPC",m.cpc!=null?fBRL(m.cpc):"—",`Meta: ${fBRL(AQUECIMENTO_METAS.cpc.val)}`,metaEmojiGlobal(m.cpc,AQUECIMENTO_METAS.cpc.val,AQUECIMENTO_METAS.cpc.higher))
+    )}
+    ${block("Facebook",
+      stageRow("Investimento",fBRL(m.spend),"","")+
+      stageRow("Cliques",m.clicks.toLocaleString("pt-BR"),"","")+
+      stageRow("CPC",m.cpc!=null?fBRL(m.cpc):"—",`Meta: ${fBRL(AQUECIMENTO_METAS.cpc.val)}`,metaEmojiGlobal(m.cpc,AQUECIMENTO_METAS.cpc.val,AQUECIMENTO_METAS.cpc.higher))+
+      stageManualRow("manual-alcance-aquecimento","Alcance",alcance,`setManualAlcance('aquecimento',this.value)`,"manual 🔧 (API não fornece)","")+
+      stageRow("Frequência",freq!=null?freq.toFixed(2).replace(".",","):"—",`Meta: ${AQUECIMENTO_METAS.frequencia.val}`,freq!=null?metaEmojiGlobal(freq,AQUECIMENTO_METAS.frequencia.val,AQUECIMENTO_METAS.frequencia.higher):"⚪")+
+      stageRow("Tx 75%",m.tx75!=null?fPct(m.tx75):"—",`Meta: ${AQUECIMENTO_METAS.tx75.val}%`,metaEmojiGlobal(m.tx75,AQUECIMENTO_METAS.tx75.val,AQUECIMENTO_METAS.tx75.higher))+
+      stageRow("Custo por Tx 75%",m.cptx75!=null?fBRL(m.cptx75):"—",`Meta: ${fBRL(AQUECIMENTO_METAS.cptx75.val)}`,metaEmojiGlobal(m.cptx75,AQUECIMENTO_METAS.cptx75.val,AQUECIMENTO_METAS.cptx75.higher))
+    )}
+    <div style="font-size:10px;color:var(--hint);max-width:640px;margin-bottom:14px">Total e Facebook mostram os mesmos números — esta base só tem uma fonte de tráfego (Meta Ads), sem quebra por plataforma. Tx75%/Custo por Tx75% usam Impressões como base (não há "Video Plays" nesta base).</div>
+    <div class="foot">OFRR · Aquecimento</div>`;
+  restoreStageFocus(_fid);
+}
+
+// ── Render: Resumo Lembrete ──────────────────────────────────────────────────
+function renderLembrete(){
+  const el=document.getElementById("page-lembrete");if(!el)return;
+  const _fid=document.activeElement?.id;
+  const rows=S.lembreteRows;
+  const m=stageMetrics(rows);
+  const alcance=S.manualAlcance.lembrete;
+  const freq=alcance>0?m.impressions/alcance:null;
+  const dates=rows.map(r=>r.date).sort();
+  const first=dates[0]||null;
+  const likesJul25=S.manualLikes.lembreteJul25, likesOut25=S.manualLikes.lembreteOut25;
+
+  function block(title,rowsHtml){
+    return `<div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px;max-width:640px">
+      <div style="font-size:13px;font-weight:700;color:var(--text-strong);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)">${title}</div>
+      ${rowsHtml}
+    </div>`;
+  }
+
+  el.innerHTML=`
+    <div class="hdr" style="margin-bottom:6px">
+      <div>
+        <div class="hdr-title">Resumo Lembrete</div>
+        <div class="hdr-sub">Benchmark: ofrr_out25 · ${first?fDateBR(first):"—"} → ${fDateBR(todayISO())}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px">${statusLegend()}</div>
+    </div>
+    ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
+    ${block("👍 Likes na aula01",
+      stageManualRow("manual-likes-lembrete-jul25","Likes na aula01 (bench jul25)",likesJul25,`setManualLikes('lembreteJul25',this.value)`,`manual 🔧 · Meta: ${LEMBRETE_METAS.likesJul25.val.toLocaleString("pt-BR")}`,likesJul25?metaEmojiGlobal(likesJul25,LEMBRETE_METAS.likesJul25.val,LEMBRETE_METAS.likesJul25.higher):"⚪")+
+      stageManualRow("manual-likes-lembrete-out25","Likes na aula01 (bench out25)",likesOut25,`setManualLikes('lembreteOut25',this.value)`,`manual 🔧 · Meta: ${LEMBRETE_METAS.likesOut25.val.toLocaleString("pt-BR")}`,likesOut25?metaEmojiGlobal(likesOut25,LEMBRETE_METAS.likesOut25.val,LEMBRETE_METAS.likesOut25.higher):"⚪")
+    )}
+    ${block("Total",
+      stageRow("Investido total",fBRL(m.spend),"","")+
+      stageRow("Cliques totais",m.clicks.toLocaleString("pt-BR"),"","")+
+      stageRow("CPC total",m.cpc!=null?fBRL(m.cpc):"—",`Meta: ${fBRL(LEMBRETE_METAS.cpc.val)}`,metaEmojiGlobal(m.cpc,LEMBRETE_METAS.cpc.val,LEMBRETE_METAS.cpc.higher))
+    )}
+    ${block("Facebook",
+      stageRow("Investimento",fBRL(m.spend),"","")+
+      stageRow("Link clicks",m.clicks.toLocaleString("pt-BR"),"","")+
+      stageRow("CPC no link",m.cpc!=null?fBRL(m.cpc):"—",`Meta: ${fBRL(LEMBRETE_METAS.cpc.val)}`,metaEmojiGlobal(m.cpc,LEMBRETE_METAS.cpc.val,LEMBRETE_METAS.cpc.higher))+
+      stageManualRow("manual-alcance-lembrete","Alcance",alcance,`setManualAlcance('lembrete',this.value)`,"manual 🔧 (API não fornece)","")+
+      stageRow("Frequência",freq!=null?freq.toFixed(2).replace(".",","):"—",`Meta: ${LEMBRETE_METAS.frequencia.val}`,freq!=null?metaEmojiGlobal(freq,LEMBRETE_METAS.frequencia.val,LEMBRETE_METAS.frequencia.higher):"⚪")
+    )}
+    <div style="font-size:10px;color:var(--hint);max-width:640px;margin-bottom:14px">Total e Facebook mostram os mesmos números — esta base só tem uma fonte de tráfego (Meta Ads). Metas fixas do benchmark ofrr_out25 (não é uma curva dia-a-dia, por falta do histórico diário completo desse benchmark).</div>
+    <div class="foot">OFRR · Lembrete</div>`;
+  restoreStageFocus(_fid);
+}
+
+// ── Render: Resumo Aulas (Aula 01/02/03) ────────────────────────────────────
+// Cada aula é identificada pelo NOME DA CAMPANHA (via aulaNumberFromCampaign)
+// — não por uma coluna própria, já que a Base Meta - Aulas mistura as 3
+// campanhas numa aba só.
+function aulaBlock(aulaNum,metas){
+  const numStr=String(aulaNum);
+  const rows=S.aulasRows.filter(r=>aulaNumberFromCampaign(r.campName)===numStr);
+  const m=stageMetrics(rows);
+  const alcanceKey="aula0"+aulaNum;
+  const alcance=S.manualAlcance[alcanceKey];
+  const freq=alcance>0?m.impressions/alcance:null;
+  const dates=rows.map(r=>r.date).sort();
+  const first=dates[0]||null;
+  const likesJul25Key="aula0"+aulaNum+"Jul25", likesOut25Key="aula0"+aulaNum+"Out25";
+  const likesJul25=S.manualLikes[likesJul25Key], likesOut25=S.manualLikes[likesOut25Key];
+
+  function block(title,rowsHtml){
+    return `<div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px;max-width:640px">
+      <div style="font-size:13px;font-weight:700;color:var(--text-strong);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)">${title}</div>
+      ${rowsHtml}
+    </div>`;
+  }
+
+  return `
+    <div class="section-lbl" style="${aulaNum>1?"margin-top:8px":"margin-top:0"}">Aula 0${aulaNum}${metas?"":" — aguardando metas específicas"}${first?` · desde ${fDateBR(first)}`:""}</div>
+    ${block("👍 Likes na aula0"+aulaNum,
+      stageManualRow(`manual-likes-aula0${aulaNum}-jul25`,`Likes na aula0${aulaNum} (bench jul25)`,likesJul25,`setManualLikes('${likesJul25Key}',this.value)`,metas?`manual 🔧 · Meta: ${metas.likesJul25.val.toLocaleString("pt-BR")}`:"manual 🔧 · sem meta ainda",metas&&likesJul25?metaEmojiGlobal(likesJul25,metas.likesJul25.val,metas.likesJul25.higher):"⚪")+
+      stageManualRow(`manual-likes-aula0${aulaNum}-out25`,`Likes na aula0${aulaNum} (bench out25)`,likesOut25,`setManualLikes('${likesOut25Key}',this.value)`,metas?`manual 🔧 · Meta: ${metas.likesOut25.val.toLocaleString("pt-BR")}`:"manual 🔧 · sem meta ainda",metas&&likesOut25?metaEmojiGlobal(likesOut25,metas.likesOut25.val,metas.likesOut25.higher):"⚪")
+    )}
+    ${block("Total",
+      stageRow("Investimento total",fBRL(m.spend),"","")+
+      stageRow("Cliques totais",m.clicks.toLocaleString("pt-BR"),"","")+
+      stageRow("CPC total",m.cpc!=null?fBRL(m.cpc):"—",metas?`Meta: ${fBRL(metas.cpc.val)}`:"sem meta ainda",metas?metaEmojiGlobal(m.cpc,metas.cpc.val,metas.cpc.higher):"")
+    )}
+    ${block("Facebook",
+      stageRow("Investimento Facebook",fBRL(m.spend),"","")+
+      stageRow("Cliques FB",m.clicks.toLocaleString("pt-BR"),"","")+
+      stageRow("CPC FB",m.cpc!=null?fBRL(m.cpc):"—",metas?`Meta: ${fBRL(metas.cpc.val)}`:"sem meta ainda",metas?metaEmojiGlobal(m.cpc,metas.cpc.val,metas.cpc.higher):"")+
+      stageManualRow(`manual-alcance-aula0${aulaNum}`,"Alcance FB",alcance,`setManualAlcance('${alcanceKey}',this.value)`,"manual 🔧 (API não fornece)","")+
+      stageRow("Frequência FB",freq!=null?freq.toFixed(2).replace(".",","):"—",metas?`Meta: ${metas.frequencia.val}`:"sem meta ainda",metas?(freq!=null?metaEmojiGlobal(freq,metas.frequencia.val,metas.frequencia.higher):"⚪"):"")
+    )}`;
+}
+function renderAulas(){
+  const el=document.getElementById("page-aulas");if(!el)return;
+  const _fid=document.activeElement?.id;
+  el.innerHTML=`
+    <div class="hdr" style="margin-bottom:6px">
+      <div>
+        <div class="hdr-title">Resumo Aulas</div>
+        <div class="hdr-sub">3 aulas · identificadas pelo nome da campanha · benchmark ofrr_out25 (só Aula 01, por enquanto)</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px">${statusLegend()}</div>
+    </div>
+    ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
+    ${aulaBlock(1,AULA01_METAS)}
+    ${aulaBlock(2,null)}
+    ${aulaBlock(3,null)}
+    <div class="foot">OFRR · Aulas</div>`;
+  restoreStageFocus(_fid);
+}
+
 // ── Render: Planejado / Realizado ──────────────────────────────────────────
 // Resumo por etapa (Captação, Aquecimento, Lembrete, Aulas, Carrinho) +
 // detalhe diário completo da Captação (única etapa com meta de leads também).
@@ -2200,9 +2504,9 @@ function render(){
     else if(S.currentSubPage==="metricas")renderMetricasTrafego();
     else if(S.currentSubPage==="leads")renderLeads();
   }
-  else if(S.currentPage==="aquecimento")renderStagePage("page-aquecimento","Aquecimento",PLANO_AQUECIMENTO);
-  else if(S.currentPage==="lembrete")renderStagePage("page-lembrete","Lembrete",PLANO_LEMBRETE);
-  else if(S.currentPage==="aulas")renderStagePage("page-aulas","Aulas",PLANO_AULAS);
+  else if(S.currentPage==="aquecimento")renderAquecimento();
+  else if(S.currentPage==="lembrete")renderLembrete();
+  else if(S.currentPage==="aulas")renderAulas();
   else if(S.currentPage==="carrinho")renderStagePage("page-carrinho","Carrinho",PLANO_CARRINHO);
   else if(S.currentPage==="planoreal")renderPlanoReal();
   else if(S.currentPage==="resumo")renderResumo();
