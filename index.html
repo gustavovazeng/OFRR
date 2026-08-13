@@ -2797,12 +2797,15 @@ function carrinhoMetaRowsInRange(start,end){
 function carrinhoFichasInRange(fichas,start,end){
   return fichas.filter(f=>(start===null||f.date>=start)&&(end===null||f.date<=end));
 }
-function carrinhoMetrics(start,end){
+// qual: "todas" (padrão, usado na aba Carrinho Principal) | "traf" (usado no
+// Resumo diário — lá só interessam as fichas de Tráfego, sem Orgânico).
+function carrinhoMetrics(start,end,qual){
+  qual=qual||"todas";
   const metaRows=carrinhoMetaRowsInRange(start,end);
   const spend=metaRows.reduce((a,r)=>a+r.spend,0);
   const clicks=metaRows.reduce((a,r)=>a+r.clicks,0);
   const impressions=metaRows.reduce((a,r)=>a+r.impressions,0);
-  const fichas=carrinhoFichasInRange(S.carrinhoFichaOrigem,start,end);
+  const fichas=carrinhoFichasInRange(S.carrinhoFichaOrigem,start,end).filter(f=>carrinhoPassQual(f.tipo,qual));
   const fichasTotal=fichas.length;
   const fichasComPreco=fichas.filter(f=>f.comPreco).length;
   return{spend,clicks,impressions,fichasTotal,fichasComPreco,
@@ -2893,15 +2896,13 @@ function renderCarrinhoPrincipal(){
       <div style="position:relative"><canvas id="c-carrinho-fichas"></canvas><div class="tip" id="t-carrinho-fichas"></div></div>
     </div>
 
-    <div class="g2" style="margin-bottom:20px">
-      <div class="cc" style="position:relative">
-        <div class="ch"><span class="ct">Fichas por dia — Tráfego</span></div>
-        <div style="position:relative"><canvas id="c-carrinho-fichas-traf"></canvas><div class="tip" id="t-carrinho-fichas-traf"></div></div>
-      </div>
-      <div class="cc" style="position:relative">
-        <div class="ch"><span class="ct">Fichas por dia — Orgânico</span></div>
-        <div style="position:relative"><canvas id="c-carrinho-fichas-org"></canvas><div class="tip" id="t-carrinho-fichas-org"></div></div>
-      </div>
+    <div class="cc" style="position:relative;margin-bottom:14px">
+      <div class="ch"><span class="ct">Fichas por dia — Tráfego</span></div>
+      <div style="position:relative"><canvas id="c-carrinho-fichas-traf"></canvas><div class="tip" id="t-carrinho-fichas-traf"></div></div>
+    </div>
+    <div class="cc" style="position:relative;margin-bottom:20px">
+      <div class="ch"><span class="ct">Fichas por dia — Orgânico</span></div>
+      <div style="position:relative"><canvas id="c-carrinho-fichas-org"></canvas><div class="tip" id="t-carrinho-fichas-org"></div></div>
     </div>
 
     ${daily.length===0?`<div class="err">Nenhum dado no período selecionado — o Carrinho ainda não começou ou os dados ainda não chegaram na planilha.</div>`:""}
@@ -3837,18 +3838,20 @@ CTR:\t${fPct(m.ctr)}
 CPM:\t${fBRL(m.cpm)}
 Tx conversão formulário:\t${fPct(m.txConversaoFormulario)}`;
 }
+// Resumo diário: só fichas de TRÁFEGO (qual="traf") — Orgânico fica de fora
+// aqui, só aparece na aba Carrinho Principal.
 function carrinhoResumoHtml(){
   const today=todayISO(),yest=yesterdayISO();
-  const tot=carrinhoMetrics(null,null);
-  const ontem=carrinhoMetrics(yest,yest);
-  const hoje=carrinhoMetrics(today,today);
+  const tot=carrinhoMetrics(null,null,"traf");
+  const ontem=carrinhoMetrics(yest,yest,"traf");
+  const hoje=carrinhoMetrics(today,today,"traf");
   return `${carrinhoResumoBlock("Total - Consolidado",tot,"")}${carrinhoResumoBlock("Ontem",ontem,fDateBR(yest))}${carrinhoResumoBlock("Hoje",hoje,fDateBR(today))}`;
 }
 function carrinhoResumoText(){
   const today=todayISO(),yest=yesterdayISO();
-  const tot=carrinhoMetrics(null,null);
-  const ontem=carrinhoMetrics(yest,yest);
-  const hoje=carrinhoMetrics(today,today);
+  const tot=carrinhoMetrics(null,null,"traf");
+  const ontem=carrinhoMetrics(yest,yest,"traf");
+  const hoje=carrinhoMetrics(today,today,"traf");
   return `ofrr_ago26 | Carrinho
 ${carrinhoResumoTextBlock("Total - Consolidado",tot,"")}
 ---------------------
